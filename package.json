@@ -1,0 +1,21 @@
+{
+  "name": "gamecast-v1",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.legacy.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "three": "^0.179.1"
+  },
+  "devDependencies": {
+    "vite": "^7.1.2"
+  }
+}
