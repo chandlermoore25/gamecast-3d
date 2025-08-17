@@ -1,6 +1,13 @@
+# Node / tooling / build
 node_modules/
 dist/
 .vite/
 *.log
 
-Models/
+# Ignore ONLY the raw top-level Models dump (if you keep big sources there)
+# Keep the deployable assets inside /public
+/Models/
+
+# Do NOT ignore the assets we ship
+!public/Models/
+!public/Models/**

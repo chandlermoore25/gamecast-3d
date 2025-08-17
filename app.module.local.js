@@ -1,24 +1,31 @@
-// app.module.local.js — LOCAL ESM (anchors + player rehome + ball tracker + ingest)
+// app.module.local.js — LOCAL ESM with anchors, debug helpers, and robust fallbacks
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-const BASE = import.meta.env.BASE_URL || './';
 
-
-// ---------------- Config ----------------
-const REAL_P2R = 18.44;          // meters home plate → rubber
-const CATCHER_HEIGHT = 1.12;     // eye height above plate
-const CATCHER_BACKOFF = 1.00;    // meters behind plate toward backstop
+// --- LIVE BINDING FOR window.gc to avoid stale refs ---
+let __gc_live = (typeof window !== 'undefined' && window.gc) ? window.gc : {};
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'gc', {
+    configurable: true,
+    get(){ return __gc_live; },
+    set(v){ __gc_live = v || {}; }
+  });
+}
+const gc = (typeof window !== 'undefined') ? window.gc : {};
+const REAL_P2R = 18.44;
+const CATCHER_HEIGHT = 1.10;
+const CATCHER_BACKOFF = 1.00;
 
 const PATHS = {
-  field:  [BASE + 'Models/field.glb'],
-  player: [BASE + 'Models/Player/body.glb', BASE + 'Models/body.glb', BASE + 'body.glb'],
-  bat:    [BASE + 'Models/bat.glb'],
-  ball:   [BASE + 'Models/baseball.glb'],
+  field: ['Models/field.glb', './Models/field.glb', 'field.glb', './field.glb']
 };
 
+const PLAYER_URLS = {
+  pitcher: 'Models/Player/pitcher_throwing.glb',
+  batter:  'Models/Player/hitter_swing.glb'
+};
 
-// Map live text → animation buckets (fallback by substring, case-insensitive)
 const MAP = {
   PITCH:'pitch', STRIKE:'pitch',
   SWING:'swing', FOUL:'foul',
@@ -27,20 +34,13 @@ const MAP = {
   STRIKEOUT:'strikeout', 'K LOOKING':'strikeout', 'K SWINGING':'strikeout', DEFAULT:'idle'
 };
 
-// --------------- Globals ---------------
 let scene, camera, renderer, clock, world;
 let mixers={}, clips={}, nodes={};
 let zoneCanvas, zctx, hudEl;
 let anchors = { plate:null, rubber:null };
 let helpers = { axes:null, plate:null, rubber:null };
-let batterSide = 'R'; // or 'L'
 const heat = Array.from({length:3},()=>[0,0,0]);
 
-// --- Tracker + physics ---
-let tracker = { enabled:true, line:null, points:[], max:80 };
-const G  = -9.81; // m/s^2
-
-// --------------- Boot ------------------
 boot().catch(err=>fatal(err?.message || String(err)));
 
 async function boot(){
@@ -54,48 +54,44 @@ async function boot(){
   document.body.appendChild(renderer.domElement);
 
   camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.01, 5000);
-  camera.position.set(0,1.2,3.2); camera.lookAt(0,1.2,0);
+  camera.position.set(0,1.2,3.2);
+  camera.lookAt(0,1.2,0);
 
   clock = new THREE.Clock();
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x1a1a1a, 0.95));
   const sun = new THREE.DirectionalLight(0xffffff, 1.0);
-  sun.position.set(10,18,8); scene.add(sun);
+  sun.position.set(10,18,8);
+  scene.add(sun);
 
   world = new THREE.Group();
   scene.add(world);
   addFailsafe();
 
   await Promise.allSettled([
-    loadAny(PATHS.field,  'field',  g=>{ captureAnchors(g.scene); world.add(g.scene);}),
-    loadAny(PATHS.player, 'player', g=>{ world.add(g.scene);}),
-    loadAny(PATHS.bat,    'bat',    g=>{ g.scene.position.set(0.25,1.05,-0.35); g.scene.rotation.set(0,Math.PI*0.1,Math.PI*0.1); world.add(g.scene);}),
-    loadAny(PATHS.ball,   'ball',   g=>{ g.scene.position.set(0,1.0,-1.6); world.add(g.scene);}),
+    loadAny(PATHS.field, 'field',  g=>{ captureAnchors(g.scene); world.add(g.scene);})
   ]);
 
+
   calibrate();
-  rehomePlayer(); // <- ensure batter is visible near the plate
   setupZone(); drawZone();
   addHUD('LOCAL ESM OK');
   wireUI();
   animate();
 
-  // Debug shortcuts
-  addEventListener('keydown', (e)=>{
+  window.addEventListener('keydown', (e)=>{
     if(e.key==='h'||e.key==='H') toggleHelpers();
     if(e.key==='g'||e.key==='G') toggleAmbient();
     if(e.key==='c'||e.key==='C') cycleCams();
     if(e.key==='r'||e.key==='R') calibrate();
   });
 
-  // Expose rich debug handle
-  window.gc = { THREE, scene, camera, renderer, world, anchors, nodes, mixers, clips, tracker, ingestStatcast };
+  window.gc = { THREE, scene, camera, renderer, world, anchors };
   console.log('[GC] debug handle set: window.gc');
 
   addEventListener('resize', onResize);
 }
 
-// ------------- Helpers / Scene ---------
 function addFailsafe(){
   const ground = new THREE.Mesh(new THREE.CircleGeometry(7,64), new THREE.MeshStandardMaterial({color:0x5a4026,roughness:1}));
   ground.rotation.x = -Math.PI/2; ground.position.y=0; world.add(ground);
@@ -113,15 +109,15 @@ async function loadAny(cands,key,onLoaded){
       nodes[key]=gltf.scene;
       if(gltf.animations?.length){
         mixers[key]=new THREE.AnimationMixer(gltf.scene);
-        const dict={};
-        for(const a of gltf.animations){ dict[a.name.toLowerCase()] = a; }
-        clips[key]=dict;
+        clips[key]=Object.fromEntries(gltf.animations.map(c=>[c.name,c]));
       } else { mixers[key]=null; clips[key]={}; }
       onLoaded?.(gltf);
       console.log(`[GC] Loaded ${key}: ${url} | clips: ${gltf.animations?.map(a=>a.name).join(', ') || 'none'}`);
       return gltf;
     }catch(e){
-      tried.push(url); lastErr = e;
+      tried.push(url);
+      console.warn(`[GC] miss ${key} at ${url}`);
+      lastErr = e;
     }
   }
   console.warn(`[GC] fail ${key} after trying: ${tried.join(', ')}`);
@@ -129,7 +125,6 @@ async function loadAny(cands,key,onLoaded){
   return null;
 }
 
-// ----------- Anchors (tolerant) --------
 function findAny(root, needles){
   const want = needles.map(n => String(n).toLowerCase());
   let hit = null;
@@ -140,13 +135,13 @@ function findAny(root, needles){
   });
   return hit;
 }
+
 function captureAnchors(root){
   anchors.plate  = findAny(root, ['PlateCenter','HomePlate','plate_center','platecenter','homeplate','plate']);
   anchors.rubber = findAny(root, ['RubberCenter','PitchersRubber','MoundCenter','rubbercenter','rubber','mound']);
   console.log('[GC] anchors:', { plate: !!anchors.plate, rubber: !!anchors.rubber });
 }
 
-// --------------- Calibration -----------
 function calibrate(){
   if (anchors.plate && anchors.rubber){
     world.updateMatrixWorld(true);
@@ -188,34 +183,6 @@ function calibrate(){
   console.log(`[GC] Calibrated (fallback). bounds=${sz.x.toFixed(2)}x${sz.y.toFixed(2)}x${sz.z.toFixed(2)} scale=${scale.toFixed(3)}`);
 }
 
-// --------------- Player re-home --------
-function rehomePlayer(){
-  const pRoot = nodes.player;
-  if(!pRoot) return;
-
-  const box = new THREE.Box3().setFromObject(pRoot), sz = box.getSize(new THREE.Vector3());
-  if (sz.y > 0) {
-    const scale = 1.8 / sz.y;
-    pRoot.scale.multiplyScalar(scale);
-  }
-
-  let base = new THREE.Vector3(0,0,0), dir = new THREE.Vector3(0,0,-1);
-  if (anchors.plate && anchors.rubber){
-    base.setFromMatrixPosition(anchors.plate.matrixWorld);
-    const rub = new THREE.Vector3().setFromMatrixPosition(anchors.rubber.matrixWorld);
-    dir.subVectors(rub, base).normalize();
-  }
-  const perp = new THREE.Vector3(-dir.z, 0, dir.x).normalize();
-  const side = (batterSide==='R') ? 1 : -1;
-  const offset = perp.multiplyScalar(0.9*side);
-  const place = base.clone().add(offset).add(new THREE.Vector3(0,0,-0.6));
-
-  pRoot.position.copy(place);
-  const look = base.clone().add(dir.clone().multiplyScalar(10));
-  pRoot.lookAt(look);
-}
-
-// --------------- Debug Helpers ----------
 function toggleAmbient(){
   const found = scene.children.find(n=>n.isAmbientLight);
   if(found){ scene.remove(found); } else{ scene.add(new THREE.AmbientLight(0xffffff, 0.7)); }
@@ -249,7 +216,6 @@ function cycleCams(){
   camera.lookAt(...p.look);
 }
 
-// --------------- Heatmap + HUD ----------
 function setupZone(){
   zoneCanvas = document.getElementById('zoneCanvas');
   zctx = zoneCanvas.getContext('2d');
@@ -293,24 +259,14 @@ function addHUD(msg=''){
   }, 800);
 }
 
-// --------------- UI & Anim -------------
 function wireUI(){
-  sel('#btnPitch')?.addEventListener('click',()=>{
-    const mph = 92 + Math.random()*6;
-    const nx = (Math.random()*2-1)*0.8;
-    const ny = (Math.random()*2-1)*0.8;
-    ingestStatcast({ mph, plate_x_ft: nx*0.708333, plate_z_ft: ny*((3.5-1.5)/2) + (1.5+3.5)/2, spin_rpm: 2000+Math.random()*600 });
-  });
+  sel('#btnPitch')?.addEventListener('click',()=>emit({type:'PITCH',desc:'FB 95 [0.2,0.1]'}));
   sel('#btnAuto')?.addEventListener('click',toggleAuto);
-  sel('#btnSide')?.addEventListener('click',()=>{
-    batterSide = (batterSide==='R')?'L':'R';
-    sel('#btnSide').textContent = `Batter: ${batterSide}`;
-    rehomePlayer();
-  });
+  sel('#btnSide')?.addEventListener('click',flipBatter);
   sel('#btnReset')?.addEventListener('click',()=>{ reset(); drawZone(); });
   document.addEventListener('gc:play', e=>{
     const evt=e.detail, key=map(evt);
-    play(key, evt.opts||{});
+    play(key);
     const pt = parsePt(evt.desc) || {x:Math.random()*2-1, y:Math.random()*2-1};
     bumpHeatAt(pt.x, pt.y); drawZone();
   });
@@ -334,11 +290,11 @@ let auto=null;
 function toggleAuto(){ auto?stopAuto():startAuto(); }
 function startAuto(){
   const plays=[
-    {type:'PITCH',desc:'FB 96 [0.1,0.5]', opts:{mph:96, targetX:0.1, targetY:0.5}},
+    {type:'PITCH',desc:'FB 96 [0.1,0.5]'},
     {type:'SWING',desc:'Hack [-0.2,0.2]'},
     {type:'FOUL',desc:'Backstop [-0.7,0.9]'},
-    {type:'PITCH',desc:'SL 86 [0.4,-0.5]', opts:{mph:86, targetX:0.4, targetY:-0.5}},
-    {type:'INPLAY',desc:'DOUBLE [0.2,0.1]'},
+    {type:'PITCH',desc:'SL 86 [0.4,-0.5]'},
+    {type:'INPLAY',desc:'Line drive — DOUBLE [0.2,0.1]'},
     {type:'WALK',desc:'BB'},
     {type:'STRIKEOUT',desc:'K swinging [-0.3,-0.4]'}
   ];
@@ -347,123 +303,100 @@ function startAuto(){
 }
 function stopAuto(){ clearInterval(auto); auto=null; sel('#btnAuto').textContent='Auto'; }
 function reset(){ play('idle'); heat.forEach(r=>r.fill(0)); }
+function flipBatter(){
+  const r=nodes.player; if(!r) return;
+  r.scale.x*=-1; const b=sel('#btnSide');
+  if(b) b.textContent = `Batter: ${r.scale.x>0?'R':'L'}`;
+}
 
-// --- Player animation with tolerant mapping + physics triggers
-function play(key='idle', opts={}){
-  const pm=mixers.player, dict=clips.player||{}; // dict keys lowercased
+function play(key='idle'){
+  const pm=mixers.player, pc=clips.player||{}, bat=nodes.bat, ball=nodes.ball;
   if(pm) pm.stopAllAction();
+  if(pm && pc[key]) pm.clipAction(pc[key]).reset().fadeIn(0.08).play();
+  else if(pm && pc.idle && key==='idle') pm.clipAction(pc.idle).reset().play();
 
-  const pick = (want)=> dict[want] ||
-    Object.entries(dict).find(([k])=>k.includes(want))?.[1];
-
-  let chosen=null;
-  if(key==='swing')   chosen = pick('swing') || pick('hit');
-  else if(key==='contact') chosen = pick('follow') || pick('hit') || pick('swing');
-  else if(key==='idle')    chosen = pick('idle') || Object.values(dict)[0];
-  else                     chosen = pick(key.toLowerCase());
-
-  if(pm && chosen){ pm.clipAction(chosen).reset().fadeIn(0.08).play(); }
-
-  const bat=nodes.bat, ball=nodes.ball;
-  if(bat)  bat.rotation.set(0, Math.PI*0.1, Math.PI*0.1);
-  if(ball) { ball.userData.v=null; touchTrail(true); }
-
+  if(bat){ bat.rotation.set(0,Math.PI*0.1,Math.PI*0.1); }
+  if(ball){ ball.position.set(0,1.0,-1.6); ball.userData.v=null; }
   switch(key){
-    case 'pitch': doPitch(opts); break;
-    case 'contact':
-      if(ball){ ball.userData.v=new THREE.Vector3(32, 20, -20).multiplyScalar(1/60); }
-      break;
-    case 'foul':
-      if(ball){ ball.userData.v=new THREE.Vector3(-18, 14, -12).multiplyScalar(1/60); }
-      break;
+    case 'pitch': if(ball){ ball.userData.v=new THREE.Vector3(0,-0.02,0.065);} break;
+    case 'swing': if(bat){ tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.8,220);} break;
+    case 'contact': if(bat) tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.75,180); if(ball){ ball.userData.v=new THREE.Vector3(0.02,0.03,-0.02);} break;
+    case 'foul': if(bat) tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.6,160); if(ball){ ball.userData.v=new THREE.Vector3(-0.02,0.02,-0.015);} break;
+    case 'walk': if(bat){ tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.15,300); setTimeout(()=>tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z+Math.PI*0.25,350),200);} break;
+    case 'strikeout': if(bat){ tween(bat.position??(bat.position={x:bat.position.x,y:bat.position.y,z:bat.position.z}),'y',bat.position.y,bat.position.y-0.2,300);} break;
   }
 }
 
-// --------------- Ball physics -----------
-function doPitch({ mph=95, targetX=0, targetY=0, spin_rpm=2200 }={}){
-  const ball=nodes.ball; if(!ball) return;
-  const ZW=0.4318, ZH=0.60;
-  const targetLocal = new THREE.Vector3(targetX*(ZW/2), 1.5 + targetY*(ZH/2), 0);
-  let plateW = new THREE.Vector3(), rubberW = new THREE.Vector3();
-  if(anchors.plate && anchors.rubber){
-    plateW.setFromMatrixPosition(anchors.plate.matrixWorld);
-    rubberW.setFromMatrixPosition(anchors.rubber.matrixWorld);
-    targetLocal.applyMatrix4(anchors.plate.matrixWorld);
-  }
-  const release = anchors.rubber ? rubberW.clone().add(new THREE.Vector3(0,1.8,0)) : new THREE.Vector3(-18.44,1.8,0);
-  ball.position.copy(release);
-
-  const speed = mph * 0.44704; // m/s
-  const flat  = new THREE.Vector3().subVectors(targetLocal, release); flat.y=0;
-  const horiz = flat.length() || 1e-6;
-  const vdir  = flat.normalize();
-  const vxz   = vdir.multiplyScalar(speed);
-  const tFlight = horiz / speed;
-  const vy = (targetLocal.y - release.y - 0.5*G*tFlight*tFlight) / tFlight;
-
-  ball.userData.v = new THREE.Vector3(vxz.x, vy, vxz.z);
-  ball.userData.spin_rps = spin_rpm/60;
-  tracker.points.length = 0; touchTrail(true);
+function tween(obj,key,a,b,ms){
+  const t0=performance.now();
+  const step=t=>{ const p=Math.min(1,(t-t0)/ms); obj[key]=a+(b-a)*(1-Math.pow(1-p,3)); if(p<1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
 }
 
-function touchTrail(reset=false){
-  if (!tracker.enabled) return;
-  if (!tracker.line) {
-    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-    const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent:true, opacity:0.8 });
-    tracker.line = new THREE.Line(geo, mat);
-    scene.add(tracker.line);
-  }
-  if(reset) tracker.points.length=0;
-}
-function updateTrail(pos){
-  if (!tracker.enabled || !tracker.line) return;
-  tracker.points.push(pos.clone());
-  if (tracker.points.length > tracker.max) tracker.points.shift();
-  tracker.line.geometry.setFromPoints(tracker.points);
-}
-function applyMagnus(v, spin_rps, dt){
-  if(!spin_rps) return;
-  const S = 0.0004 * spin_rps;              // tune
-  const lift = new THREE.Vector3(-v.z, 0, v.x).multiplyScalar(S);
-  v.addScaledVector(lift, dt);
-}
-
-// --------------- Animate ---------------
 function animate(){
   requestAnimationFrame(animate);
   const dt=clock.getDelta();
   for(const k in mixers){ const m=mixers[k]; if(m) m.update(dt); }
   const ball=nodes.ball;
   if(ball && ball.userData.v){
-    const v=ball.userData.v;
-    applyMagnus(v, ball.userData.spin_rps, dt);
-    ball.position.addScaledVector(v, dt);
-    v.y += G * dt;
-    if(ball.position.y<0.02){
-      ball.position.y=0.02;
-      v.y=Math.abs(v.y)*0.35; v.x*=0.85; v.z*=0.85;
-      if(v.length()<0.8) ball.userData.v=null;
-    }
-    updateTrail(ball.position);
+    const v=ball.userData.v; ball.position.add(v); v.y-=0.0012;
+    if(ball.position.y<0.02){ ball.position.y=0.02; v.y=Math.abs(v.y)*0.35; v.x*=0.8; v.z*=0.8; if(v.length()<0.002) ball.userData.v=null; }
   }
   renderer.render(scene,camera);
 }
 
 function onResize(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); drawZone(); }
 
-// --------------- Data ingest -----------
-function ingestStatcast({ mph, plate_x_ft, plate_z_ft, sz_bot_ft=1.5, sz_top_ft=3.5, spin_rpm=2200 }){
-  const nx = Math.max(-1, Math.min(1, plate_x_ft / 0.708333));              // half-width ~0.708 ft
-  const mid = (sz_bot_ft + sz_top_ft)/2, half=(sz_top_ft - sz_bot_ft)/2||1;  // normalize vertical
-  const ny = Math.max(-1, Math.min(1, (plate_z_ft - mid)/half ));
-  bumpHeatAt(nx, ny); drawZone();
-  play('pitch', { mph, targetX:nx, targetY:ny, spin_rpm });
-}
-
-// --------------- Fatal -----------------
 function fatal(msg){
   const el=document.createElement('div');
   Object.assign(el.style,{position:'fixed',inset:'0',display:'grid',placeItems:'center',background:'#000',color:'#fff',font:'16px/1.4 ui-monospace'});
   el.textContent='Fatal: '+msg; document.body.appendChild(el);
 }
+
+
+// ================== SPAWNER: pitcher + batter ==================
+const __spawnLog = (...a)=>console.log('[SPAWN]', ...a);
+const __waitFor = (fn, ms=15000)=>new Promise((res,rej)=>{const t0=performance.now();const id=setInterval(()=>{try{if(fn()){clearInterval(id);res(true);}else if(performance.now()-t0>ms){clearInterval(id);rej(new Error('timeout'));}}catch(e){clearInterval(id);rej(e)}},60);});
+const __fitH = (obj, target=1.85)=>{const box=new THREE.Box3().setFromObject(obj);const size=box.getSize(new THREE.Vector3());const h=size.y||1;let k=target/h;if(!isFinite(k)||k<=0)k=1; k=Math.max(0.05, Math.min(20, k)); obj.scale.multiplyScalar(k); return k;};
+const __feet = (obj)=>{const b=new THREE.Box3().setFromObject(obj); obj.position.y -= b.min.y;};
+const __wpos = (o)=>o?new THREE.Vector3().setFromMatrixPosition(o.matrixWorld):null;
+const __lookXZ = (obj, tgt)=>{const p=obj.position.clone(); const t=tgt.clone(); p.y=t.y=0; obj.lookAt(t);};
+async function __loadGLB(u){return await new Promise((ok,ko)=>{new GLTFLoader().load(u, ok, undefined, ko);});}
+
+async function __spawnAll(){
+  await __waitFor(()=>scene && world);           // scene/world created
+  await __waitFor(()=>anchors && (anchors.plate||anchors.rubber), 20000); // anchors captured after field load
+
+  // Spawn pitcher
+  try{
+    const g = await __loadGLB(PLAYER_URLS.pitcher);
+    const root = g.scene; root.traverse(o=>{o.castShadow=o.receiveShadow=true;});
+    const scale = __fitH(root, 1.85); __feet(root);
+    const rW = __wpos(anchors.rubber) || new THREE.Vector3(0,0,-18.44);
+    root.position.copy(rW);
+    const look = __wpos(anchors.plate) || rW.clone().add(new THREE.Vector3(0,0,10));
+    __lookXZ(root, look);
+    if (g.animations?.length){ const m=new THREE.AnimationMixer(root); m.clipAction(g.animations[0]).play(); mixers.pitcher=m; clips.pitcher=g.animations[0]; }
+    nodes.pitcher = root; scene.add(root);
+    const axes=new THREE.AxesHelper(0.8); root.add(axes);
+    const box=new THREE.Box3().setFromObject(root); const helper=new THREE.Box3Helper(box,0xff00ff); scene.add(helper); setTimeout(()=>scene.remove(helper),5000);
+    __spawnLog('pitcher ok scale', scale.toFixed(3), 'pos', root.position.toArray());
+  }catch(e){ console.warn('pitcher load failed', e); }
+
+  // Spawn batter (RHB default)
+  try{
+    const g = await __loadGLB(PLAYER_URLS.batter);
+    const root = g.scene; root.traverse(o=>{o.castShadow=o.receiveShadow=true;});
+    const scale = __fitH(root, 1.85); __feet(root);
+    const pW = __wpos(anchors.plate) || new THREE.Vector3(0,0,0);
+    root.position.set(pW.x + 0.85, 0, pW.z - 0.35);
+    const look = __wpos(anchors.rubber) || pW.clone().add(new THREE.Vector3(0,0,10));
+    __lookXZ(root, look);
+    if (g.animations?.length){ const m=new THREE.AnimationMixer(root); m.clipAction(g.animations[0]).play(); mixers.batter=m; clips.batter=g.animations[0]; }
+    nodes.batter = root; nodes.player = root; scene.add(root);
+    const axes=new THREE.AxesHelper(0.8); root.add(axes);
+    const box=new THREE.Box3().setFromObject(root); const helper=new THREE.Box3Helper(box,0x00ffff); scene.add(helper); setTimeout(()=>scene.remove(helper),5000);
+    __spawnLog('batter ok scale', scale.toFixed(3), 'pos', root.position.toArray());
+  }catch(e){ console.warn('batter load failed', e); }
+}
+__spawnAll().catch(e=>console.warn('spawn timeout', e));
