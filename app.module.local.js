@@ -2,6 +2,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
+// -- runtime debug toggle
+const DEBUG = false;
+
 
 // --- LIVE BINDING FOR window.gc to avoid stale refs ---
 let __gc_live = (typeof window !== 'undefined' && window.gc) ? window.gc : {};
@@ -14,8 +17,8 @@ if (typeof window !== 'undefined') {
 }
 const gc = (typeof window !== 'undefined') ? window.gc : {};
 const REAL_P2R = 18.44;
-const CATCHER_HEIGHT = 1.10;
-const CATCHER_BACKOFF = 1.00;
+const CATCHER_HEIGHT = 1.25;
+const CATCHER_BACKOFF = 1.40;
 
 const PATHS = {
   field: ['Models/field.glb', './Models/field.glb', 'field.glb', './field.glb']
@@ -166,7 +169,7 @@ function calibrate(){
 
     camera.near = 0.01; camera.far = 5000; camera.updateProjectionMatrix();
     camera.position.copy(eye);
-    camera.lookAt(p.clone().add(dir.multiplyScalar(REAL_P2R*1.6)));
+    camera.lookAt(p.clone().add(dir.multiplyScalar(REAL_P2R*1.8)));
     console.log(`[GC] Calibrated (anchors).`);
     return;
   }
@@ -378,8 +381,8 @@ async function __spawnAll(){
     __lookXZ(root, look);
     if (g.animations?.length){ const m=new THREE.AnimationMixer(root); m.clipAction(g.animations[0]).play(); mixers.pitcher=m; clips.pitcher=g.animations[0]; }
     nodes.pitcher = root; scene.add(root);
-    const axes=new THREE.AxesHelper(0.8); root.add(axes);
-    const box=new THREE.Box3().setFromObject(root); const helper=new THREE.Box3Helper(box,0xff00ff); scene.add(helper); setTimeout(()=>scene.remove(helper),5000);
+    if (DEBUG) { if (DEBUG) { const axes=new THREE.AxesHelper(0.8); root.add(axes); } }
+    if (DEBUG) { const box=new THREE.Box3().setFromObject(root); const helper=new THREE.Box3Helper(box,0xff00ff); scene.add(helper); setTimeout(()=>scene.remove(helper),5000); }
     __spawnLog('pitcher ok scale', scale.toFixed(3), 'pos', root.position.toArray());
   }catch(e){ console.warn('pitcher load failed', e); }
 
@@ -389,13 +392,13 @@ async function __spawnAll(){
     const root = g.scene; root.traverse(o=>{o.castShadow=o.receiveShadow=true;});
     const scale = __fitH(root, 1.85); __feet(root);
     const pW = __wpos(anchors.plate) || new THREE.Vector3(0,0,0);
-    root.position.set(pW.x + 0.85, 0, pW.z - 0.35);
+    root.position.set(pW.x + 0.95, 0, pW.z - 0.20);
     const look = __wpos(anchors.rubber) || pW.clone().add(new THREE.Vector3(0,0,10));
     __lookXZ(root, look);
     if (g.animations?.length){ const m=new THREE.AnimationMixer(root); m.clipAction(g.animations[0]).play(); mixers.batter=m; clips.batter=g.animations[0]; }
     nodes.batter = root; nodes.player = root; scene.add(root);
-    const axes=new THREE.AxesHelper(0.8); root.add(axes);
-    const box=new THREE.Box3().setFromObject(root); const helper=new THREE.Box3Helper(box,0x00ffff); scene.add(helper); setTimeout(()=>scene.remove(helper),5000);
+    if (DEBUG) { const axes=new THREE.AxesHelper(0.8); root.add(axes); }
+    if (DEBUG) { const box=new THREE.Box3().setFromObject(root); const helper=new THREE.Box3Helper(box,0x00ffff); scene.add(helper); setTimeout(()=>scene.remove(helper),5000); }
     __spawnLog('batter ok scale', scale.toFixed(3), 'pos', root.position.toArray());
   }catch(e){ console.warn('batter load failed', e); }
 }
