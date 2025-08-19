@@ -23,17 +23,36 @@
 </head>
 <body>
   <div id="ui">
-    <div class="row">
-      <span class="badge">AWY 0 - 0 HME</span>
-      <span class="badge">Top 1 · 0 Out · 0-0</span>
-    </div>
-    <div class="row">
-      <button id="btnPitch">Pitch</button>
-      <button id="btnAuto">Auto</button>
-      <button id="btnSide">Batter: R</button>
-      <button id="btnReset">Reset</button>
-    </div>
+  <div class="row">
+    <span class="badge">AWY 0 - 0 HME</span>
+    <span class="badge">Top 1 · 0 Out · 0-0</span>
   </div>
+  <div class="row">
+    <button id="btnPitch">Pitch</button>
+    <button id="btnAuto">Auto</button>
+    <button id="btnSide">Batter: R</button>
+    <button id="btnReset">Reset</button>
+  </div>
+  <!-- NEW: backend connection controls used by stream.client.js -->
+  <div class="row" style="align-items:center; gap:8px;">
+    <!-- Your hosted backend URL on Render -->
+    <input id="api" type="text" value="https://gamecast-3d.onrender.com"
+           style="width:170px; padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;" />
+
+    <!-- Game date -->
+    <input id="date" type="date"
+           style="padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;" />
+
+    <!-- Load the games list for the date -->
+    <button id="load">Games</button>
+
+    <!-- Games dropdown (populated by stream.client.js) -->
+    <select id="games" style="min-width:260px; padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;"></select>
+
+    <!-- Connect (WS with SSE fallback) -->
+    <button id="connect">Connect</button>
+  </div>
+</div>
   <canvas id="zoneCanvas" width="360" height="360" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-45%);width:28vmin;height:28vmin;pointer-events:none;opacity:.96"></canvas>
 <script type="module" src="./app.module.local.js"></script>
 <script type="module" src="./tweaks.rehome.js"></script>
