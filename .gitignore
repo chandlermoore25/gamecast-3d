@@ -11,3 +11,13 @@ dist/
 # Do NOT ignore the assets we ship
 !public/Models/
 !public/Models/**
+.venv/
+__pycache__/
+*.log
+.DS_Store
+Thumbs.db
+.venv/
+__pycache__/
+*.log
+.DS_Store
+Thumbs.db

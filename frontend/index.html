@@ -12,6 +12,14 @@
     #ui button{margin:0;padding:6px 10px;background:#0a1f28;border:1px solid #123847;color:#bfefff;border-radius:8px;cursor:pointer}
     #ui button:hover{background:#0d2a36}
   </style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 </head>
 <body>
   <div id="ui">
@@ -27,8 +35,9 @@
     </div>
   </div>
   <canvas id="zoneCanvas" width="360" height="360" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-45%);width:28vmin;height:28vmin;pointer-events:none;opacity:.96"></canvas>
-  <script type="module" src="/app.module.local.js"></script>
-  <script type="module" src="/tweaks.rehome.js"></script>
-  <script type="module" src="/tweaks.primitives.js"></script>
+<script type="module" src="./app.module.local.js"></script>
+<script type="module" src="./tweaks.rehome.js"></script>
+<script type="module" src="./tweaks.primitives.js"></script>
+<script type="module" src="./stream.client.js"></script>
 </body>
 </html>
