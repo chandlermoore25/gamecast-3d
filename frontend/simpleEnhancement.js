@@ -215,6 +215,12 @@
   let ballPhysics, gameState;
   
   function initializeEnhancements() {
+    // Ensure THREE is available (module build may load it asynchronously)
+    if (typeof window === 'undefined' || !window.THREE) {
+      console.warn('[Enhancement] THREE not defined yet; retrying...');
+      return setTimeout(initializeEnhancements, 250);
+    }
+    
     try {
       // Initialize systems
       ballPhysics = new SimpleBallPhysics();

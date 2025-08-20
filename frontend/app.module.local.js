@@ -5,6 +5,10 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { snapActors } from './tweaks.snapActors.js';
 
+// expose THREE globally for non-module scripts
+if (typeof window !== 'undefined') { window.THREE = THREE; }
+
+
 // ---- URL resolver (EXACT COPY) ----
 function urlVariants(relPath) {
   const list = [];

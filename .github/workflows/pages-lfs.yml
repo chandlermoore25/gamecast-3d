@@ -1,0 +1,56 @@
+name: Deploy to GitHub Pages (with LFS)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with Git LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Ensure Git LFS objects are present
+        run: |
+          git lfs install --local
+          git lfs fetch --all
+          git lfs checkout
+          echo "---- LFS files ----"
+          git lfs ls-files -l
+
+      # If your site lives in /frontend, copy it to a /dist folder for upload.
+      # If index.html is already at repo root, you can remove this step and set path: '.' below.
+      - name: Prepare static site
+        run: |
+          mkdir -p dist
+          rsync -av --delete --exclude '.git*' --exclude '.github' ./frontend/ ./dist/
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
