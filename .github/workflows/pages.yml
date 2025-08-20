@@ -24,16 +24,14 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Ensure Git LFS objects are present
+      - name: Ensure LFS objects present (debug)
         run: |
           git lfs install --local
           git lfs fetch --all
           git lfs checkout
-          echo "---- LFS files ----"
+          echo "[CI] LFS files:"
           git lfs ls-files -l
 
-      # If your site lives in /frontend, copy it to a /dist folder for upload.
-      # If index.html is already at repo root, you can remove this step and set path: '.' below.
       - name: Prepare static site
         run: |
           mkdir -p dist
