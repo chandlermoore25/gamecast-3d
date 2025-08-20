@@ -1,0 +1,17 @@
+GameCast v1
+├── backend
+│   ├──fastapi_app.py
+│   ├──mlb_live_stream.py
+│   ├──launch.bat
+├── frontend
+│   ├── models
+│   │       └── Player
+│   │           ├── hitter_swing.glb
+│   │           └── pitcher_throwing.glb
+            └── field.glb
+│   ├── app.module.local.js
+│   ├── index.html
+│   ├── tweaks.primitives.js
+│   ├── tweaks.rehome.js
+│   └── tweaks.snapActors.js
+

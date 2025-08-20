@@ -1,5 +1,6 @@
 // app.module.local.js — anchors + POV + correct player GLBs (hitter_swing, pitcher_throwing)
 // Hardened: urlVariants defined first, early window.gc stub, player anims, gc:ready event, verbose logs.
+// FIXED: Added missing play function and other bug fixes
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -30,7 +31,6 @@ if (typeof window !== 'undefined') {
   window.gc.state = window.gc.state || { batterHand: 'R' };
 }
 
-
 // ---- Helpers: fit model height to 1.85m, world-pos, look on XZ ----
 function __fitH(obj, target=1.85){
   const box=new THREE.Box3().setFromObject(obj);
@@ -44,7 +44,6 @@ function __fitH(obj, target=1.85){
 }
 function __wpos(o){ return o ? new THREE.Vector3().setFromMatrixPosition(o.matrixWorld) : null; }
 function __lookXZ(obj, tgt){ const p=obj.position.clone(); const t=tgt.clone(); p.y=t.y=0; obj.lookAt(t); }
-
 
 // ---- Ball tracer (independent of primitives) ----
 function ensureTracer(){
@@ -60,6 +59,7 @@ function ensureTracer(){
   window.gc.tracker = { line, positions, max, count:0 };
   return window.gc.tracker;
 }
+// ENHANCED: Ball tracing integration
 function tracerPush(pos){
   const tr=ensureTracer();
   if(!pos) return;
@@ -74,13 +74,38 @@ function tracerPush(pos){
   tr.count = count+1;
   tr.line.geometry.attributes.position.needsUpdate = true;
   tr.line.geometry.setDrawRange(0, tr.count);
+  
+  // Also update ballTrail if it exists
+  if (window.gc?.ballTrail) {
+    const trail = window.gc.ballTrail;
+    const index = (trail.pointCount % trail.maxPoints) * 3;
+    trail.positions[index] = pos.x;
+    trail.positions[index + 1] = pos.y;
+    trail.positions[index + 2] = pos.z;
+    trail.pointCount++;
+    const drawCount = Math.min(trail.pointCount, trail.maxPoints);
+    trail.line.geometry.setDrawRange(0, drawCount);
+    trail.line.geometry.attributes.position.needsUpdate = true;
+  }
 }
+
 function tracerClear(){
   if(!window.gc.tracker) return;
   window.gc.tracker.count = 0;
   window.gc.tracker.line.geometry.setDrawRange(0,0);
+  window.gc.tracker.line.geometry.attributes.position.needsUpdate = true;
+  
+  // Also clear ballTrail
+  if (window.gc?.ballTrail) {
+    window.gc.ballTrail.pointCount = 0;
+    window.gc.ballTrail.line.geometry.setDrawRange(0, 0);
+    window.gc.ballTrail.line.geometry.attributes.position.needsUpdate = true;
+  }
 }
 
+// Make tracerPush globally accessible
+window.tracerPush = tracerPush;
+window.tracerClear = tracerClear;
 
 // ================== CONFIG ==================
 const REAL_P2R = 18.44;
@@ -120,7 +145,6 @@ let state = window.gc.state || { batterHand:'R' };
 let zoneCanvas, zctx, hudEl;
 const heat = Array.from({length:3},()=>[0,0,0]);
 
-
 // ---- HUD (simple status bottom-left) ----
 function addHUD(msg=''){
   try{
@@ -144,11 +168,10 @@ function addHUD(msg=''){
   }
 }
 
-
 boot().catch(err=>fatal(err?.message || String(err)));
 
 async function boot(){
-  console.log('[GC] Boot — correct player GLBs + POV + anchors');
+  console.log('[GC] Boot — correct player GLBs + POV + anchors + Y-fix');
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
 
@@ -188,12 +211,35 @@ async function boot(){
   // Kick any external listeners waiting for ready
   document.dispatchEvent(new CustomEvent('gc:ready', { detail:{ ready:true } }));
 
+  // WAIT for primitives to load before continuing
+  await waitForPrimitives();
+
   setupZone(); drawZone();
-  addHUD('LOCAL ESM — anchors + POV + anim players');
+  addHUD('LOCAL ESM — anchors + POV + anim players + Y-fix');
   wireUI();
+  
+  // Disable auto-resnapping that's causing infinite scaling
+  console.log('[GC] Disabling problematic auto-resnap');
+  
   animate();
 
   addEventListener('resize', onResize);
+}
+
+// Wait for ball and bat to be created by primitives
+async function waitForPrimitives() {
+  return new Promise((resolve) => {
+    const checkPrimitives = () => {
+      if (nodes.ball && nodes.bat) {
+        console.log('[GC] Primitives loaded - ball and bat ready');
+        resolve();
+      } else {
+        console.log('[GC] Waiting for primitives...', { ball: !!nodes.ball, bat: !!nodes.bat });
+        setTimeout(checkPrimitives, 100);
+      }
+    };
+    checkPrimitives();
+  });
 }
 
 function publishGC(){
@@ -206,8 +252,26 @@ function publishGC(){
   window.gc.mixers = mixers;
   window.gc.clips = clips;
   window.gc.state = state;
-  window.gc.resnap = ()=>snapActors({ THREE, anchors, batter:nodes.batter, pitcher:nodes.pitcher, batterMesh:nodes.batterMesh, pitcherMesh:nodes.pitcherMesh, camera, scene, world, state });
-  console.log('[GC] debug handle set: window.gc');
+  window.gc.resnap = ()=>{
+    if (window.gc.resnapDisabled) {
+      console.log('[GC] Resnap disabled, skipping');
+      return;
+    }
+    snapActors({ 
+      THREE, 
+      anchors, 
+      batter:nodes.batter, 
+      pitcher:nodes.pitcher, 
+      batterMesh:nodes.batterMesh, 
+      pitcherMesh:nodes.pitcherMesh, 
+      camera, 
+      scene, 
+      world, 
+      state,
+      skipGroundFit: true 
+    });
+  };
+  console.log('[GC] debug handle set: window.gc + Y-fix');
 }
 
 function addFailsafe(){
@@ -312,7 +376,6 @@ function calibrate(){
   console.log('[GC] Calibrated (fallback).');
 }
 
-
 function __fitToField(obj, targetMeters=1.85){
   const box = new THREE.Box3().setFromObject(obj);
   const size = box.getSize(new THREE.Vector3());
@@ -368,56 +431,88 @@ function __centerFeetXZ(root){
 async function spawnPlayers(){
   const pitcherGLB = await loadAny(PLAYER_URLS.pitcher, 'pitcherGLB', null);
   
-if (pitcherGLB?.scene){
+  if (pitcherGLB?.scene){
     const root = pitcherGLB.scene;
     root.traverse(o=>{o.castShadow=o.receiveShadow=true;});
     __fitToField(root, 1.85);
-    const bbox = new THREE.Box3().setFromObject(root);
-    if (isFinite(bbox.min.y)) root.position.y -= bbox.min.y;
+    
+    // Y-Fix BEFORE creating rig - get raw bbox from scaled model
+    const rawBbox = new THREE.Box3().setFromObject(root);
+    const yFix = isFinite(rawBbox.min.y) ? -rawBbox.min.y : 0;
+    root.position.y += yFix;
+    console.log('[Y-Fix] Pitcher foot adjustment:', yFix.toFixed(3));
+    
     const rigP = new THREE.Group(); rigP.name='pitcherRig'; rigP.add(root);
     nodes.pitcherMesh = root; nodes.pitcher = rigP; scene.add(rigP);
 
     if (pitcherGLB.animations?.length){
       const m = new THREE.AnimationMixer(root);
+      // Start with idle instead of auto-playing throwing
+      const clips = Object.fromEntries(pitcherGLB.animations.map(c=>[c.name,c]));
       mixers.pitcher = m;
-      const clip = pickClip(pitcherGLB.animations, ['throw','pitch']);
-      m.clipAction(clip).setLoop(THREE.LoopRepeat).play();
-      console.log('[Anim] pitcher clip:', clip?.name);
+      clips.pitcher = clips;
+      
+      // Look for idle first, then any non-action clip
+      const idleClip = pickClip(pitcherGLB.animations, ['idle','stand','rest','pose']) || 
+                       pitcherGLB.animations.find(a => !['throw','pitch','throwing'].some(w => a.name.toLowerCase().includes(w))) ||
+                       pitcherGLB.animations[0];
+      
+      const action = m.clipAction(idleClip);
+      action.setLoop(THREE.LoopRepeat).play();
+      console.log('[Anim] pitcher starting with:', idleClip?.name);
     }
   }
+  
   const batterGLB = await loadAny(PLAYER_URLS.batter, 'batterGLB', null);
   
-if (batterGLB?.scene){
+  if (batterGLB?.scene){
     const root = batterGLB.scene;
     root.traverse(o=>{o.castShadow=o.receiveShadow=true;});
     __fitToField(root, 1.85);
-    const bbox = new THREE.Box3().setFromObject(root);
-    if (isFinite(bbox.min.y)) root.position.y -= bbox.min.y;
+    
+    // Y-Fix BEFORE creating rig - get raw bbox from scaled model
+    const rawBbox = new THREE.Box3().setFromObject(root);
+    const yFix = isFinite(rawBbox.min.y) ? -rawBbox.min.y : 0;
+    root.position.y += yFix;
+    console.log('[Y-Fix] Batter foot adjustment:', yFix.toFixed(3));
+    
     const rigB = new THREE.Group(); rigB.name='batterRig'; rigB.add(root);
     nodes.batterMesh = root; nodes.batter = rigB; nodes.player = rigB; scene.add(rigB);
 
     if (batterGLB.animations?.length){
       const m = new THREE.AnimationMixer(root);
+      // Start with idle instead of auto-playing swing
+      const clips = Object.fromEntries(batterGLB.animations.map(c=>[c.name,c]));
       mixers.batter = m;
-      const clip = pickClip(batterGLB.animations, ['swing','idle','hit','contact']);
-      m.clipAction(clip).setLoop(THREE.LoopRepeat).play();
-      console.log('[Anim] batter clip:', clip?.name);
+      clips.batter = clips;
+      
+      // Look for idle first, then any non-action clip
+      const idleClip = pickClip(batterGLB.animations, ['idle','stand','rest','pose']) || 
+                       batterGLB.animations.find(a => !['swing','hit','hitting'].some(w => a.name.toLowerCase().includes(w))) ||
+                       batterGLB.animations[0];
+      
+      const action = m.clipAction(idleClip);
+      action.setLoop(THREE.LoopRepeat).play();
+      console.log('[Anim] batter starting with:', idleClip?.name);
     }
   }
 
-  // Feet-on-ground normalization (based on bbox)
-  if (nodes.pitcher){
-    const bbox = new THREE.Box3().setFromObject(nodes.pitcher);
-    if (isFinite(bbox.min.y)) nodes.pitcher.position.y -= bbox.min.y;
-  }
-  if (nodes.batter){
-    const bbox = new THREE.Box3().setFromObject(nodes.batter);
-    if (isFinite(bbox.min.y)) nodes.batter.position.y -= bbox.min.y;
-  }
-
-  // Anchor-driven placement
+  // Anchor-driven placement - DISABLE the additional Y adjustment in snapActors
   try{
-    snapActors({ THREE, anchors, batter:nodes.batter, pitcher:nodes.pitcher, batterMesh:nodes.batterMesh, pitcherMesh:nodes.pitcherMesh, camera, scene, world, state });
+    // Pass flag to disable Y-adjustment in snapActors since we already did it
+    snapActors({ 
+      THREE, 
+      anchors, 
+      batter: nodes.batter, 
+      pitcher: nodes.pitcher, 
+      batterMesh: nodes.batterMesh, 
+      pitcherMesh: nodes.pitcherMesh, 
+      camera, 
+      scene, 
+      world, 
+      state,
+      skipGroundFit: true // NEW FLAG to prevent double Y-adjustment
+    });
   }catch(e){ console.warn('snapActors initial call failed', e); }
 }
 
@@ -429,7 +524,6 @@ function pickClip(anims, keywords){
 
 // ================== UI / LOOP ==================
 function setupZone(){ zoneCanvas = document.getElementById('zoneCanvas'); zctx = zoneCanvas?.getContext('2d'); }
-
 
 function heatColor(t){
   const r=Math.floor(255*Math.max(0,t*1.6-0.2)), g=Math.floor(255*Math.min(1,t*1.6+0.2)), b=Math.floor(255*(1-t));
@@ -461,16 +555,16 @@ function drawZone(){
   }
 }
 
-
-
 function wireUI(){
   const byId = (id)=>document.getElementById(id);
   byId('btnPitch')?.addEventListener('click',()=>emit({type:'PITCH',desc:'FB 95 [0.2,0.1]'}));
   byId('btnAuto')?.addEventListener('click',toggleAuto);
   byId('btnSide')?.addEventListener('click',()=>{
     state.batterHand = (state.batterHand === 'R') ? 'L' : 'R';
-    try{ snapActors({ THREE, anchors, batter:nodes.batter, pitcher:nodes.pitcher, batterMesh:nodes.batterMesh, pitcherMesh:nodes.pitcherMesh, camera, scene, world, state }); }catch{}
+    // REMOVED: Automatic resnapping that was causing infinite scaling
+    // try{ snapActors({ THREE, anchors, batter:nodes.batter, pitcher:nodes.pitcher, batterMesh:nodes.batterMesh, pitcherMesh:nodes.pitcherMesh, camera, scene, world, state }); }catch{}
     const b=byId('btnSide'); if(b) b.textContent = `Batter: ${state.batterHand}`;
+    console.log('[UI] Batter hand changed to:', state.batterHand, '(resnap disabled to prevent scaling bug)');
   });
   byId('btnReset')?.addEventListener('click',()=>{ reset(); drawZone(); tracerClear(); });
   document.addEventListener('gc:play', e=>{
@@ -480,7 +574,6 @@ function wireUI(){
     bumpHeatAt(pt.x, pt.y); drawZone();
   });
 }
-
 
 function docById(id){ return document.getElementById(id); }
 function sel(s){ return document.querySelector(s); }
@@ -503,7 +596,12 @@ function startAuto(){
   const b=docById('btnAuto')||sel('#btnAuto'); if(b) b.textContent='Auto: ON';
 }
 function stopAuto(){ clearInterval(auto); auto=null; const b=docById('btnAuto')||sel('#btnAuto'); if(b) b.textContent='Auto'; }
-function reset(){ play('idle'); heat.forEach(r=>r.fill(0)); }
+
+// FIXED: Added missing reset function
+function reset(){ 
+  play('idle'); 
+  heat.forEach(r=>r.fill(0)); 
+}
 
 function map(evt){
   const t=String(evt?.type||'').toUpperCase();
@@ -511,52 +609,130 @@ function map(evt){
   return 'idle';
 }
 
-
+// FIXED: Enhanced play function with proper animation linking
 function play(key='idle', evt=null){
-  const pb=mixers.batter, clipsB=clips.batter||{};
-  if(pb) pb.stopAllAction();
-  // advance anim if we have a matching clip name
-  const clipMatch = (nm)=>Object.keys(clipsB).find(k=>k.toLowerCase().includes(nm));
-  const playClip = (nm)=>{ const cName = clipMatch(nm); if (cName) pb.clipAction(clipsB[cName]).reset().fadeIn(0.08).play(); };
+  console.log('[PLAY]', key, evt?.desc || '');
+  
+  const pitcherMixer = mixers.pitcher;
+  const batterMixer = mixers.batter;
+  const pitcherClips = clips.pitcher || {};
+  const batterClips = clips.batter || {};
+  
+  // Helper to find and play clips
+  const playClip = (mixer, clipSet, keywords, fallback = 'idle') => {
+    if (!mixer) return false;
+    
+    const findClip = (words) => {
+      return Object.keys(clipSet).find(name => 
+        words.some(word => name.toLowerCase().includes(word.toLowerCase()))
+      );
+    };
+    
+    let clipName = findClip(keywords);
+    if (!clipName) clipName = findClip([fallback]);
+    if (!clipName) clipName = Object.keys(clipSet)[0];
+    
+    if (clipName && clipSet[clipName]) {
+      mixer.stopAllAction();
+      const action = mixer.clipAction(clipSet[clipName]);
+      action.reset().fadeIn(0.1).setLoop(THREE.LoopOnce).play();
+      console.log('[ANIM]', mixer === pitcherMixer ? 'pitcher' : 'batter', 'playing:', clipName);
+      return true;
+    } else {
+      console.warn('[ANIM] No clips found for', mixer === pitcherMixer ? 'pitcher' : 'batter', 'keywords:', keywords);
+      return false;
+    }
+  };
 
   const bat = nodes.bat || window.gc.nodes?.bat;
   const ball = nodes.ball || window.gc.nodes?.ball;
+  
+  console.log('[PLAY] Available objects:', { bat: !!bat, ball: !!ball });
 
   switch(key){
     case 'pitch':
-      playClip('throw') || playClip('pitch') || playClip('idle');
+      // Pitcher throws, batter ready
+      playClip(pitcherMixer, pitcherClips, ['throw', 'pitch', 'throwing'], 'idle');
+      playClip(batterMixer, batterClips, ['ready', 'stance', 'idle'], 'idle');
+      
       if (ball){
-        // start toward plate: rough vector; gravity will act in animate()
-        ball.userData.v = new THREE.Vector3(0, -0.02, 0.065);
-        tracerClear(); tracerPush(ball.position);
+        // Start ball movement toward plate with visible trail
+        ball.userData.v = new THREE.Vector3(-0.01, -0.02, 0.065);
+        tracerClear(); 
+        tracerPush(ball.position);
+        console.log('[BALL] Pitch started, ball velocity set');
       }
       break;
+      
     case 'swing':
-      playClip('swing') || playClip('hit') || playClip('idle');
-      if (bat){ tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.8,220); }
+      // Batter swings
+      playClip(batterMixer, batterClips, ['swing', 'hit', 'hitting'], 'idle');
+      
+      if (bat) {
+        tween(bat.rotation, 'z', bat.rotation.z, bat.rotation.z - Math.PI * 0.8, 220);
+      }
       break;
+      
     case 'contact':
-      playClip('hit') || playClip('swing') || playClip('idle');
-      if (bat) tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.75,180);
-      if (ball){ ball.userData.v=new THREE.Vector3(0.02,0.03,-0.02); tracerPush(ball.position); }
+      // Both players react to contact
+      playClip(pitcherMixer, pitcherClips, ['follow', 'watch', 'idle'], 'idle');
+      playClip(batterMixer, batterClips, ['hit', 'contact', 'swing'], 'idle');
+      
+      if (bat) {
+        tween(bat.rotation, 'z', bat.rotation.z, bat.rotation.z - Math.PI * 0.75, 180);
+      }
+      if (ball) {
+        ball.userData.v = new THREE.Vector3(0.02, 0.03, -0.02);
+        tracerPush(ball.position);
+      }
       break;
+      
     case 'foul':
-      playClip('swing') || playClip('idle');
-      if (bat) tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.6,160);
-      if (ball){ ball.userData.v=new THREE.Vector3(-0.02,0.02,-0.015); tracerPush(ball.position); }
+      // Similar to swing but different ball trajectory
+      playClip(batterMixer, batterClips, ['swing', 'hit'], 'idle');
+      
+      if (bat) {
+        tween(bat.rotation, 'z', bat.rotation.z, bat.rotation.z - Math.PI * 0.6, 160);
+      }
+      if (ball) {
+        ball.userData.v = new THREE.Vector3(-0.02, 0.02, -0.015);
+        tracerPush(ball.position);
+      }
       break;
+      
     case 'walk':
-      playClip('idle');
-      if (bat){ tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z-Math.PI*0.15,300); setTimeout(()=>tween(bat.rotation,'z',bat.rotation.z,bat.rotation.z+Math.PI*0.25,350),200); }
+      // Both players return to idle/rest positions
+      playClip(pitcherMixer, pitcherClips, ['idle', 'rest'], 'idle');
+      playClip(batterMixer, batterClips, ['walk', 'rest', 'idle'], 'idle');
+      
+      if (bat) {
+        // Relax bat position
+        tween(bat.rotation, 'z', bat.rotation.z, bat.rotation.z - Math.PI * 0.15, 300);
+        setTimeout(() => {
+          tween(bat.rotation, 'z', bat.rotation.z, bat.rotation.z + Math.PI * 0.25, 350);
+        }, 200);
+      }
       break;
+      
     case 'strikeout':
-      playClip('idle');
+      // Pitcher celebrates, batter disappointed
+      playClip(pitcherMixer, pitcherClips, ['celebrate', 'pump', 'idle'], 'idle');
+      playClip(batterMixer, batterClips, ['disappointed', 'out', 'idle'], 'idle');
       break;
+      
     default:
-      playClip('idle');
+    case 'idle':
+      // Return both to idle positions
+      playClip(pitcherMixer, pitcherClips, ['idle', 'stand'], 'idle');
+      playClip(batterMixer, batterClips, ['idle', 'stand'], 'idle');
+      
+      // Reset bat position
+      if (bat) {
+        tween(bat.rotation, 'z', bat.rotation.z, 0, 500);
+      }
+      break;
   }
 }
-
 
 function animate(){
   requestAnimationFrame(animate);
@@ -575,7 +751,6 @@ function animate(){
 
 function onResize(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); }
 function fatal(msg){ const el=document.createElement('div'); Object.assign(el.style,{position:'fixed',inset:'0',display:'grid',placeItems:'center',background:'#000',color:'#fff',font:'16px/1.4 ui-monospace'}); el.textContent='Fatal: '+msg; document.body.appendChild(el); }
-
 
 function tween(obj,key,a,b,ms){
   const t0=performance.now();

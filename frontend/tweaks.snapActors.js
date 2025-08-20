@@ -1,4 +1,6 @@
-// tweaks.snapActors.js
+// tweaks.snapActors.js (PATCHED VERSION)
+// FIXED: Automatic Y-fix for floating players
+
 import * as THREE from 'three';
 
 // ---------- helpers --------------------------------------------------------
@@ -72,7 +74,7 @@ function computeFacing(plateV, rubberV) {
 }
 
 // place using a world measurement fn, then return the world bbox min.y
-function placeByMeasuredPoint(rig, mesh, measureWorldFn, anchor, yaw, scaleMul = 1, debugTag = '') {
+function placeByMeasuredPoint(rig, mesh, measureWorldFn, anchor, yaw, scaleMul = 1, debugTag = '', skipGroundFit = false) {
   rig.rotation.set(0, yaw, 0);
   if (scaleMul !== 1) rig.scale.multiplyScalar(scaleMul);
   rig.updateMatrixWorld(true);
@@ -88,6 +90,11 @@ function placeByMeasuredPoint(rig, mesh, measureWorldFn, anchor, yaw, scaleMul =
     console.log(`[SNAP] ${debugTag} | Δ after snap`, err.toArray().map(n => +n.toFixed(3)));
   }
 
+  if (skipGroundFit) {
+    console.log(`[SNAP] ${debugTag} | Skipping ground fit (Y already adjusted)`);
+    return rig.position.y;
+  }
+
   const box = new THREE.Box3().setFromObject(rig);
   return isFinite(box.min.y) ? box.min.y : rig.position.y;
 }
@@ -101,7 +108,8 @@ export function snapActors({
   handed = 'R',
   pitcherMesh = null,
   batterMesh = null,
-  debug = true
+  debug = true,
+  skipGroundFit = false // NEW: Skip the additional ground fitting
 }) {
   const plateV  = toV3(anchors.plate, scene);
   const rubberV = toV3(anchors.rubber, scene);
@@ -138,28 +146,55 @@ export function snapActors({
 
   const bFeetBiased = bFeet.clone().add(fwd.clone().multiplyScalar(batterDepthMeters));
 
-  // Pitcher (unchanged)
+  // Pitcher 
   if (pitcher) {
     const mesh = getCharMesh(pitcher, pitcherMesh);
-    placeByMeasuredPoint(pitcher, mesh, getFeetWorldAvg, pFeet, yaw, pitcherScale, 'pitcher');
-    if (debug) console.log('[SPAWN] pitcher pos', pitcher.position.toArray(), 'scale', pitcher.scale.toArray());
+    placeByMeasuredPoint(pitcher, mesh, getFeetWorldAvg, pFeet, yaw, pitcherScale, 'pitcher', skipGroundFit);
+    
+    // FORCE ground the pitcher if floating
+    if (!skipGroundFit) {
+      const bbox = new THREE.Box3().setFromObject(pitcher);
+      if (isFinite(bbox.min.y) && bbox.min.y > 0.1) {
+        const adjustment = -bbox.min.y;
+        pitcher.position.y += adjustment;
+        pitcher.updateMatrixWorld(true);
+        console.log('[SNAP] pitcher | FORCED ground adjustment:', adjustment.toFixed(3));
+      }
+    }
+    
+    if (debug) console.log('[SPAWN] pitcher pos', pitcher.position.toArray().map(n => n.toFixed(2)), 'scale', pitcher.scale.toArray());
   }
 
-  // Batter — lock back foot for X/Z, then ground-fit Y using bbox min
+  // Batter — FORCE GROUND FIX
   if (batter) {
     const mesh = getCharMesh(batter, batterMesh);
-    const minYBefore = placeByMeasuredPoint(batter, mesh, (m)=>getBackFootWorld(m, fwd), bFeetBiased, yaw + Math.PI, batterScale, 'batter(back-foot)');
+    const minYBefore = placeByMeasuredPoint(batter, mesh, (m)=>getBackFootWorld(m, fwd), bFeetBiased, yaw + Math.PI, batterScale, 'batter(back-foot)', skipGroundFit);
 
-    // Ground fit Y so soles touch the box plane
+    // ALWAYS try to ground the batter properly
     const box = new THREE.Box3().setFromObject(batter);
     if (isFinite(box.min.y)) {
-      const dy = bFeetBiased.y - box.min.y;         // how far above/below ground
-      batter.position.y += dy + batterYOffset;      // apply correction + optional trim
-      batter.updateMatrixWorld(true);
-      if (debug) console.log('[SNAP] batter | groundY fit dy=', +dy.toFixed(3), 'yTrim=', batterYOffset);
+      if (!skipGroundFit) {
+        // Original logic
+        const dy = bFeetBiased.y - box.min.y;
+        batter.position.y += dy + batterYOffset;
+        batter.updateMatrixWorld(true);
+        if (debug) console.log('[SNAP] batter | groundY fit dy=', +dy.toFixed(3), 'yTrim=', batterYOffset);
+      } else {
+        // Force ground if still floating even with skipGroundFit
+        if (box.min.y > 0.1) {
+          const forceAdjustment = -box.min.y + batterYOffset;
+          batter.position.y += forceAdjustment;
+          batter.updateMatrixWorld(true);
+          console.log('[SNAP] batter | FORCED ground adjustment:', forceAdjustment.toFixed(3));
+        } else if (batterYOffset !== 0) {
+          batter.position.y += batterYOffset;
+          batter.updateMatrixWorld(true);
+          if (debug) console.log('[SNAP] batter | applied yTrim only=', batterYOffset);
+        }
+      }
     }
 
-    if (debug) console.log('[SPAWN] batter pos', batter.position.toArray(), 'scale', batter.scale.toArray(), 'handed', handed);
+    if (debug) console.log('[SPAWN] batter pos', batter.position.toArray().map(n => n.toFixed(2)), 'scale', batter.scale.toArray(), 'handed', handed);
   }
 
   if (debug) console.log('[snaps] snapped.');

@@ -7,10 +7,12 @@
   <style>
     html,body{margin:0;height:100%;background:#000;overflow:hidden}
     #ui{position:absolute;top:10px;left:10px;color:#e6f7ff;font:14px/1.2 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;z-index:10}
-    #ui .row{display:flex;gap:6px;margin:6px 0}
+    #ui .row{display:flex;gap:6px;margin:6px 0;align-items:center;}
     #ui .badge{display:inline-block;padding:6px 10px;background:#06141a;border:1px solid #0f2e3a;border-radius:8px}
     #ui button{margin:0;padding:6px 10px;background:#0a1f28;border:1px solid #123847;color:#bfefff;border-radius:8px;cursor:pointer}
     #ui button:hover{background:#0d2a36}
+    #ui button:disabled{background:#1a1a1a;color:#666;cursor:not-allowed;}
+    #ui input, #ui select{padding:6px 8px;border-radius:8px;border:1px solid #123847;background:#06141a;color:#bfefff;}
   </style>
 <script type="importmap">
 {
@@ -23,40 +25,145 @@
 </head>
 <body>
   <div id="ui">
-  <div class="row">
-    <span class="badge">AWY 0 - 0 HME</span>
-    <span class="badge">Top 1 · 0 Out · 0-0</span>
+    <div class="row">
+      <span class="badge">AWY 0 - 0 HME</span>
+      <span class="badge" id="gameState">Top 1 · 0 Out · 0-0</span>
+    </div>
+    <div class="row">
+      <button id="btnPitch">Pitch</button>
+      <button id="btnAuto">Auto</button>
+      <button id="btnSide">Batter: R</button>
+      <button id="btnReset">Reset</button>
+    </div>
+    <!-- Backend controls will be dynamically added here -->
   </div>
-  <div class="row">
-    <button id="btnPitch">Pitch</button>
-    <button id="btnAuto">Auto</button>
-    <button id="btnSide">Batter: R</button>
-    <button id="btnReset">Reset</button>
-  </div>
-  <!-- NEW: backend connection controls used by stream.client.js -->
-  <div class="row" style="align-items:center; gap:8px;">
-    <!-- Your hosted backend URL on Render -->
-    <input id="api" type="text" value="https://gamecast-3d.onrender.com"
-           style="width:170px; padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;" />
 
-    <!-- Game date -->
-    <input id="date" type="date"
-           style="padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;" />
+  <canvas id="zoneCanvas" width="360" height="360" 
+          style="position:absolute;left:50%;top:50%;transform:translate(-50%,-45%);width:28vmin;height:28vmin;pointer-events:none;opacity:.96"></canvas>
 
-    <!-- Load the games list for the date -->
-    <button id="load">Games</button>
+  <!-- Load scripts in proper order -->
+  <script type="module" src="./app.module.local.js"></script>
+  <script type="module" src="./tweaks.rehome.js"></script>
+  <script type="module" src="./tweaks.primitives.js"></script>
+  
+  <!-- Manual controls for testing -->
+  <script type="module" src="./manualControls.js"></script>
+  
+  <!-- Simple backend toggle (no errors) -->
+  <script type="module" src="./simpleBackendToggle.js"></script>
+  
+  <!-- Enhanced features (single initialization) -->
+  <script type="module">
+    let enhancementsInitialized = false;
+    
+    console.log('[Enhancement] Loading simple ball tracing enhancement...');
+    
+    // Single enhancement initialization
+    document.addEventListener('gc:ready', () => {
+      if (enhancementsInitialized) return;
+      enhancementsInitialized = true;
+      
+      console.log('[Enhancement] GameCast detected, initializing...');
+      
+      // Simple ball trail
+      setTimeout(() => {
+        if (window.gc && window.gc.THREE && window.gc.scene && !window.gc.ballTrail) {
+          const THREE = window.gc.THREE;
+          const geometry = new THREE.BufferGeometry();
+          const positions = new Float32Array(300);
+          geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          
+          const material = new THREE.LineBasicMaterial({
+            color: 0x00ff88,
+            transparent: true,
+            opacity: 0.7
+          });
+          
+          const line = new THREE.Line(geometry, material);
+          window.gc.scene.add(line);
+          
+          window.gc.ballTrail = {
+            line: line,
+            positions: positions,
+            pointCount: 0,
+            maxPoints: 100
+          };
+          
+          console.log('[Enhancement] Ball trail created');
+        }
+      }, 500);
+    });
 
-    <!-- Games dropdown (populated by stream.client.js) -->
-    <select id="games" style="min-width:260px; padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;"></select>
-
-    <!-- Connect (WS with SSE fallback) -->
-    <button id="connect">Connect</button>
-  </div>
-</div>
-  <canvas id="zoneCanvas" width="360" height="360" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-45%);width:28vmin;height:28vmin;pointer-events:none;opacity:.96"></canvas>
-<script type="module" src="./app.module.local.js"></script>
-<script type="module" src="./tweaks.rehome.js"></script>
-<script type="module" src="./tweaks.primitives.js"></script>
-<script type="module" src="./stream.client.js"></script>
+    // Handle game events for UI updates and animations
+    document.addEventListener('gc:play', (e) => {
+      const event = e.detail;
+      console.log('[UI] Game event:', event.type, event.desc);
+      
+      // Update game state display
+      if (event.raw) {
+        const raw = event.raw;
+        const inning = raw.inning || '?';
+        const half = raw.half || '?';
+        const outs = raw.outs ?? '?';
+        const balls = raw.count?.balls ?? '?';
+        const strikes = raw.count?.strikes ?? '?';
+        
+        const gameStateEl = document.getElementById('gameState');
+        if (gameStateEl) {
+          gameStateEl.textContent = `${half} ${inning} · ${outs} Out · ${balls}-${strikes}`;
+        }
+      }
+      
+      // Enhanced ball trail updates
+      if (window.gc?.ballTrail && window.gc?.nodes?.ball) {
+        const trail = window.gc.ballTrail;
+        const ballPos = window.gc.nodes.ball.position;
+        
+        // Only add to trail for ball movement events
+        if (['PITCH', 'CONTACT', 'FOUL'].includes(event.type)) {
+          const index = (trail.pointCount % trail.maxPoints) * 3;
+          trail.positions[index] = ballPos.x;
+          trail.positions[index + 1] = ballPos.y;
+          trail.positions[index + 2] = ballPos.z;
+          
+          trail.pointCount++;
+          const drawCount = Math.min(trail.pointCount, trail.maxPoints);
+          
+          trail.line.geometry.setDrawRange(0, drawCount);
+          trail.line.geometry.attributes.position.needsUpdate = true;
+        }
+      }
+      
+      // Visual feedback for events
+      const gameStateEl = document.getElementById('gameState');
+      if (gameStateEl) {
+        // Flash colors for different events
+        const originalBg = gameStateEl.style.background;
+        let flashColor = '#06141a';
+        
+        switch (event.type) {
+          case 'STRIKEOUT':
+            flashColor = '#4a1a1a'; // Red flash
+            break;
+          case 'CONTACT':
+            flashColor = '#1a4a1a'; // Green flash
+            break;
+          case 'WALK':
+            flashColor = '#1a1a4a'; // Blue flash
+            break;
+          case 'PITCH':
+            flashColor = '#4a4a1a'; // Yellow flash
+            break;
+        }
+        
+        gameStateEl.style.background = flashColor;
+        setTimeout(() => {
+          gameStateEl.style.background = originalBg;
+        }, 300);
+      }
+    });
+    
+    console.log('[Enhancement] Simple enhancements loaded');
+  </script>
 </body>
 </html>
