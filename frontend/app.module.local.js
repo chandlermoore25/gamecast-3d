@@ -5,14 +5,25 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { snapActors } from './tweaks.snapActors.js';
 
-// expose THREE globally for non-module scripts
-if (typeof window !== 'undefined') { window.THREE = THREE; }
-
-
 // ---- URL resolver (EXACT COPY) ----
 function urlVariants(relPath) {
-  const list = [];
-  try { list.push(new URL(relPath, document.baseURI).href); } catch {}
+  const base = (location.origin + location.pathname).replace(/\/$/, '');
+  const owner = 'chandlermoore25';
+  const repo  = 'gamecast-3d';
+  const branch = 'main';
+  const RAW_FRONTEND = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/frontend`;
+  const RAW_ROOT     = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`;
+
+  const list = [
+    `${base}/${relPath}`,
+    `/gamecast-3d/${relPath}`,
+    relPath,
+    `${RAW_FRONTEND}/${relPath}`,
+    `${RAW_ROOT}/${relPath}`,
+  ];
+  console.debug('[GC] urlVariants', relPath, '→', list);
+  return list;
+} catch {}
   try { list.push(new URL(relPath, import.meta.url).href); } catch {}
   try {
     const segs = (location.pathname || '').split('/').filter(Boolean);
@@ -259,7 +270,9 @@ function addFailsafe(){
 }
 
 async function loadAny(cands,key,onLoaded){
-  const loader = new GLTFLoader();
+  \1
+  loader.setCrossOrigin('anonymous');
+  console.debug('[GC] GLTFLoader crossOrigin=anonymous');
   const list = Array.isArray(cands) ? cands : [cands];
   let lastErr=null, tried=[];
   for(const url of list){
