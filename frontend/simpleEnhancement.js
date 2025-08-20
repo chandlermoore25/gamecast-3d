@@ -8,7 +8,7 @@
   
   // Wait for your existing system to be ready
   function waitForGameCast() {
-    if (window.gc && window.gc.scene && window.gc.nodes) {
+    if (window.gc && window.gc.scene && window.gc.nodes && typeof window.THREE !== 'undefined') {
       console.log('[Enhancement] GameCast detected, initializing...');
       setTimeout(initializeEnhancements, 500);
     } else {
@@ -215,6 +215,8 @@
   let ballPhysics, gameState;
   
   function initializeEnhancements() {
+    if (typeof window.THREE === 'undefined') { console.log('[Enhancement] THREE not ready, retrying...'); return setTimeout(initializeEnhancements, 250); }
+
     // Ensure THREE is available (module build may load it asynchronously)
     if (typeof window === 'undefined' || !window.THREE) {
       console.warn('[Enhancement] THREE not defined yet; retrying...');
