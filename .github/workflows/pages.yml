@@ -30,12 +30,29 @@ jobs:
           git lfs fetch --all
           git lfs checkout
           echo "[CI] LFS files:"
-          git lfs ls-files -l
+          git lfs ls-files -l || true
 
+      # If your site files live in /frontend (canonical), keep this.
+      # If index.html is at repo root instead, change ./frontend/ to ./ below.
       - name: Prepare static site
         run: |
           mkdir -p dist
           rsync -av --delete --exclude '.git*' --exclude '.github' ./frontend/ ./dist/
+          # ensure Jekyll doesn't strip assets
+          touch dist/.nojekyll
+
+      - name: List trees (debug)
+        run: |
+          echo "[CI] FRONTEND:"
+          ls -la ./frontend
+          echo "[CI] FRONTEND/models:"
+          ls -la ./frontend/models || true
+          ls -la ./frontend/models/Player || true
+          echo "[CI] DIST ROOT:"
+          ls -la ./dist
+          echo "[CI] DIST/models:"
+          ls -la ./dist/models || true
+          ls -la ./dist/models/Player || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
