@@ -21,3 +21,8 @@ __pycache__/
 *.log
 .DS_Store
 Thumbs.db
+# Re-include model assets for Pages
+!frontend/models/
+!frontend/models/*.glb
+!frontend/models/Player/
+!frontend/models/Player/*.glb
