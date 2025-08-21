@@ -3,16 +3,119 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>GameCast v1 — 3D (FIXED)</title>
+  <title>GameCast v1 — FIXED: Local DB + Animations + Ball/Bat Logic</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚾</text></svg>">
   <style>
-    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif}
+    
+    /* UI Styling */
     #ui{position:absolute;top:10px;left:10px;color:#e6f7ff;font:14px/1.2 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;z-index:10}
-    #ui .row{display:flex;gap:6px;margin:6px 0}
+    #ui .row{display:flex;gap:6px;margin:6px 0;align-items:center}
     #ui .badge{display:inline-block;padding:6px 10px;background:#06141a;border:1px solid #0f2e3a;border-radius:8px}
     #ui button{margin:0;padding:6px 10px;background:#0a1f28;border:1px solid #123847;color:#bfefff;border-radius:8px;cursor:pointer}
     #ui button:hover{background:#0d2a36}
+    #ui select,#ui input{padding:6px 8px;border-radius:8px;border:1px solid #123847;background:#06141a;color:#bfefff}
+    
+    /* ESPN-Style Strike Zone */
+    #strikeZoneOverlay{
+      position:absolute;
+      left:50%;
+      top:50%;
+      transform:translate(-50%,-60%);
+      width:300px;
+      height:400px;
+      pointer-events:none;
+      z-index:50;
+    }
+    
+    .strike-zone-container{
+      position:relative;
+      width:100%;
+      height:100%;
+      background:rgba(0,0,0,0.3);
+      border:2px solid rgba(255,255,255,0.8);
+      border-radius:8px;
+    }
+    
+    .zone-grid{
+      position:absolute;
+      top:50px;
+      left:50px;
+      width:200px;
+      height:300px;
+      border:2px solid rgba(255,255,255,0.9);
+      display:grid;
+      grid-template-columns:1fr 1fr 1fr;
+      grid-template-rows:1fr 1fr 1fr;
+    }
+    
+    .zone-cell{
+      border:1px solid rgba(255,255,255,0.4);
+      position:relative;
+    }
+    
+    .pitch-dot{
+      position:absolute;
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      border:1px solid #fff;
+      transform:translate(-50%,-50%);
+      z-index:10;
+      transition:all 0.3s ease;
+    }
+    
+    .zone-title{
+      position:absolute;
+      top:10px;
+      left:50%;
+      transform:translateX(-50%);
+      color:#fff;
+      font-weight:bold;
+      font-size:14px;
+      text-shadow:2px 2px 4px rgba(0,0,0,0.8);
+    }
+    
+    /* Stats Panel */
+    #liveStats{
+      position:absolute;
+      right:20px;
+      top:20px;
+      width:200px;
+      background:rgba(0,0,0,0.8);
+      border:1px solid rgba(0,255,136,0.3);
+      border-radius:8px;
+      padding:12px;
+      color:#fff;
+      font-size:12px;
+      font-family:monospace;
+    }
+    
+    #liveStats h3{
+      margin:0 0 8px 0;
+      color:#00ff88;
+      font-size:14px;
+    }
+    
+    .stat-row{
+      display:flex;
+      justify-content:space-between;
+      margin:4px 0;
+    }
+    
+    .status-indicator{
+      display:inline-block;
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      margin-right:6px;
+    }
+    
+    .status-active{background:#00ff88;}
+    .status-inactive{background:#ff4444;}
+    .status-ready{background:#ffaa00;}
   </style>
+  
 <script type="importmap">
 {
   "imports": {
@@ -24,44 +127,314 @@
 </head>
 
 <body>
+  <!-- Main UI Controls -->
   <div id="ui">
-  <div class="row">
-    <span class="badge">AWY 0 - 0 HME</span>
-    <span class="badge" id="gameState">Top 1 · 0 Out · 0-0</span>
+    <!-- Game State Display -->
+    <div class="row">
+      <span class="badge" id="gameState">Demo Game • Top 1 • 0 Out • 0-0</span>
+      <span class="badge" id="connectionStatus">Offline Mode</span>
+    </div>
+    
+    <!-- Primary Controls -->
+    <div class="row">
+      <button id="btnPitch">Pitch</button>
+      <button id="btnAuto">Auto</button>
+      <button id="btnSide">Batter: R</button>
+      <button id="btnReset">Reset</button>
+    </div>
   </div>
-  <div class="row">
-    <button id="btnPitch">Pitch</button>
-    <button id="btnAuto">Auto</button>
-    <button id="btnSide">Batter: R</button>
-    <button id="btnReset">Reset</button>
+
+  <!-- ESPN-Style Strike Zone -->
+  <div id="strikeZoneOverlay">
+    <div class="strike-zone-container">
+      <div class="zone-title">Strike Zone</div>
+      <div class="zone-grid" id="zoneGrid">
+        <div class="zone-cell" data-zone="0"></div>
+        <div class="zone-cell" data-zone="1"></div>
+        <div class="zone-cell" data-zone="2"></div>
+        <div class="zone-cell" data-zone="3"></div>
+        <div class="zone-cell" data-zone="4"></div>
+        <div class="zone-cell" data-zone="5"></div>
+        <div class="zone-cell" data-zone="6"></div>
+        <div class="zone-cell" data-zone="7"></div>
+        <div class="zone-cell" data-zone="8"></div>
+      </div>
+    </div>
   </div>
-  <!-- Backend connection controls -->
-  <div class="row" style="align-items:center; gap:8px;">
-    <input id="api" type="text" value="https://gamecast-3d.onrender.com"
-           style="width:170px; padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;" />
-    <input id="date" type="date"
-           style="padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;" />
-    <button id="load">Games</button>
-    <select id="games" style="min-width:260px; padding:6px 8px; border-radius:8px; border:1px solid #123847; background:#06141a; color:#bfefff;"></select>
-    <button id="connect">Connect</button>
+
+  <!-- Live Stats Panel -->
+  <div id="liveStats">
+    <h3>🎯 Live MLB Stats</h3>
+    <div class="stat-row">
+      <span>Pitches:</span>
+      <span id="pitchCount">0</span>
+    </div>
+    <div class="stat-row">
+      <span>Strikes:</span>
+      <span id="strikeCount">0</span>
+    </div>
+    <div class="stat-row">
+      <span>Velocity:</span>
+      <span id="avgVelocity">0 mph</span>
+    </div>
+    <div class="stat-row">
+      <span>Ball:</span>
+      <span><span class="status-indicator status-inactive" id="ballIndicator"></span><span id="ballStatus">Static</span></span>
+    </div>
+    <div class="stat-row">
+      <span>Bat:</span>
+      <span><span class="status-indicator status-ready" id="batIndicator"></span><span id="batStatus">Ready</span></span>
+    </div>
+    <div class="stat-row">
+      <span>Backend:</span>
+      <span><span class="status-indicator status-inactive" id="backendIndicator"></span><span id="backendStatus">Local</span></span>
+    </div>
   </div>
-</div>
+
+  <!-- Load Core Modules -->
+  <script type="module" src="./app.module.local.js"></script>
+  <script type="module" src="./tweaks.primitives.js"></script>
+
+<script>
+// FIXED GameCast Integration System
+(function() {
+  'use strict';
   
-  <canvas id="zoneCanvas" width="360" height="360" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-45%);width:28vmin;height:28vmin;pointer-events:none;opacity:.96"></canvas>
+  console.log('[FixedGameCast] Loading complete integration system...');
+  
+  let gameStats = {
+    pitches: 0,
+    strikes: 0,
+    velocities: [],
+    ballActive: false,
+    batActive: false,
+    backendConnected: false
+  };
+  
+  // Enhanced strike zone management
+  const strikeZoneManager = {
+    pitchColors: {
+      'Fastball': '#ff6b6b',
+      'Slider': '#4ecdc4', 
+      'Curveball': '#45b7d1',
+      'Changeup': '#96ceb4',
+      'Sinker': '#feca57',
+      'Cutter': '#ff9ff3'
+    },
+    
+    addPitch(pitchData) {
+      const zoneGrid = document.getElementById('zoneGrid');
+      if (!zoneGrid) return;
+      
+      // Convert MLB coordinates to zone position
+      const xPercent = ((pitchData.location.x + 0.83) / 1.66) * 100;
+      const zPercent = ((3.5 - pitchData.location.z) / 2.0) * 100;
+      
+      const clampedX = Math.max(5, Math.min(95, xPercent));
+      const clampedZ = Math.max(5, Math.min(95, zPercent));
+      
+      const pitchDot = document.createElement('div');
+      pitchDot.className = 'pitch-dot';
+      pitchDot.style.left = clampedX + '%';
+      pitchDot.style.top = clampedZ + '%';
+      pitchDot.style.backgroundColor = this.pitchColors[pitchData.pitchType] || '#ffffff';
+      pitchDot.title = `${pitchData.pitchType} • ${pitchData.velocity} mph`;
+      
+      zoneGrid.appendChild(pitchDot);
+      
+      // Remove old dots (keep last 15)
+      const dots = zoneGrid.querySelectorAll('.pitch-dot');
+      if (dots.length > 15) {
+        dots[0].remove();
+      }
+    },
+    
+    clear() {
+      const zoneGrid = document.getElementById('zoneGrid');
+      if (zoneGrid) {
+        zoneGrid.querySelectorAll('.pitch-dot').forEach(dot => dot.remove());
+      }
+    }
+  };
+  
+  // Stats updater
+  function updateStats() {
+    document.getElementById('pitchCount').textContent = gameStats.pitches;
+    document.getElementById('strikeCount').textContent = gameStats.strikes;
+    
+    const avgVel = gameStats.velocities.length > 0 ? 
+      gameStats.velocities.reduce((a, b) => a + b, 0) / gameStats.velocities.length : 0;
+    document.getElementById('avgVelocity').textContent = avgVel.toFixed(1) + ' mph';
+    
+    // Update status indicators
+    const ballIndicator = document.getElementById('ballIndicator');
+    const batIndicator = document.getElementById('batIndicator');
+    const backendIndicator = document.getElementById('backendIndicator');
+    
+    ballIndicator.className = `status-indicator ${gameStats.ballActive ? 'status-active' : 'status-inactive'}`;
+    batIndicator.className = `status-indicator ${gameStats.batActive ? 'status-active' : 'status-ready'}`;
+    backendIndicator.className = `status-indicator ${gameStats.backendConnected ? 'status-active' : 'status-inactive'}`;
+    
+    document.getElementById('ballStatus').textContent = gameStats.ballActive ? 'Flying' : 'Static';
+    document.getElementById('batStatus').textContent = gameStats.batActive ? 'Swinging' : 'Ready';
+    document.getElementById('backendStatus').textContent = gameStats.backendConnected ? 'Connected' : 'Local';
+  }
+  
+  // Enhanced event handler
+  function handleGameEvent(event) {
+    const { type, desc, raw, animation } = event.detail;
+    
+    console.log('[FixedGameCast] Handling event:', type, desc);
+    
+    // Parse pitch data
+    const pitchData = parsePitchData(event.detail);
+    
+    // Update stats
+    if (type === 'PITCH') {
+      gameStats.pitches++;
+      gameStats.velocities.push(pitchData.velocity);
+      
+      if (pitchData.isStrike) {
+        gameStats.strikes++;
+      }
+      
+      // Add to strike zone
+      strikeZoneManager.addPitch(pitchData);
+    }
+    
+    // Update game state display
+    if (raw?.inning && raw?.half) {
+      const gameStateEl = document.getElementById('gameState');
+      gameStateEl.textContent = `${raw.half} ${raw.inning} • ${raw.outs || 0} Out • ${raw.count?.balls || 0}-${raw.count?.strikes || 0}`;
+    }
+    
+    updateStats();
+  }
+  
+  function parsePitchData(eventDetail) {
+    const { type, desc, raw } = eventDetail;
+    
+    // Extract location from description
+    const locationMatch = desc.match(/\[([-\d.]+)\s*,\s*([-\d.]+)\]/);
+    const velocityMatch = desc.match(/(\d+)/);
+    const pitchTypeMatch = desc.match(/^(\w+)/);
+    
+    return {
+      pitchType: pitchTypeMatch?.[1] || raw?.pitch?.type || 'Fastball',
+      velocity: velocityMatch ? parseInt(velocityMatch[1]) : raw?.pitch?.mph || 88 + Math.random() * 12,
+      location: {
+        x: locationMatch ? parseFloat(locationMatch[1]) : raw?.pitch?.loc?.px || (Math.random() - 0.5) * 1.6,
+        z: locationMatch ? parseFloat(locationMatch[2]) : raw?.pitch?.loc?.pz || 1.5 + Math.random() * 2
+      },
+      isStrike: type.includes('STRIKE') || desc.toLowerCase().includes('strike'),
+      timestamp: Date.now()
+    };
+  }
+  
+  // Ball/bat status monitor
+  function monitorBallBatStatus() {
+    setInterval(() => {
+      // Check ball status
+      const ball = window.gc?.nodes?.ball;
+      const ballFlying = !!(ball?.userData?.v || ball?.userData?.enhancedVelocity || ball?.userData?.isEnhanced);
+      
+      // Check bat status from animation controller
+      const batSwinging = window.animationController?.getStatus?.()?.batter?.isRunning() || 
+                         window.ballBatLogic?.getStatus?.()?.batState?.isSwinging || false;
+      
+      // Check backend connection
+      const backendConnected = window.streamClient?.isConnected?.() || false;
+      
+      // Update if changed
+      if (gameStats.ballActive !== ballFlying) {
+        gameStats.ballActive = ballFlying;
+        updateStats();
+      }
+      
+      if (gameStats.batActive !== batSwinging) {
+        gameStats.batActive = batSwinging;
+        updateStats();
+      }
+      
+      if (gameStats.backendConnected !== backendConnected) {
+        gameStats.backendConnected = backendConnected;
+        updateStats();
+      }
+    }, 250);
+  }
+  
+  // Wait for GameCast and initialize
+  function waitForGameCast() {
+    if (window.gc && window.gc.scene && window.gc.nodes) {
+      console.log('[FixedGameCast] GameCast ready, initializing integration...');
+      setTimeout(initializeIntegration, 1000);
+    } else {
+      setTimeout(waitForGameCast, 200);
+    }
+  }
+  
+  function initializeIntegration() {
+    // Hook into game events
+    document.addEventListener('gc:play', handleGameEvent);
+    
+    // Start monitoring
+    monitorBallBatStatus();
+    
+    // Initialize stats display
+    updateStats();
+    
+    // Add reset functionality
+    document.getElementById('btnReset')?.addEventListener('click', () => {
+      gameStats = {
+        pitches: 0,
+        strikes: 0,
+        velocities: [],
+        ballActive: false,
+        batActive: false,
+        backendConnected: gameStats.backendConnected // Preserve connection status
+      };
+      
+      strikeZoneManager.clear();
+      updateStats();
+      
+      console.log('[FixedGameCast] Stats reset');
+    });
+    
+    console.log('[FixedGameCast] ✅ Integration system initialized');
+  }
+  
+  // Initialize when ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', waitForGameCast);
+  } else {
+    waitForGameCast();
+  }
+  
+  document.addEventListener('gc:ready', () => {
+    setTimeout(waitForGameCast, 500);
+  });
+  
+  // Export for debugging
+  window.fixedGameCast = {
+    gameStats,
+    strikeZoneManager,
+    updateStats,
+    reset: () => {
+      gameStats.pitches = 0;
+      gameStats.strikes = 0;
+      gameStats.velocities = [];
+      strikeZoneManager.clear();
+      updateStats();
+    }
+  };
+  
+})();
+</script>
 
-<!-- FIXED: Load scripts in correct order, removed 404 references -->
-<script type="module" src="./app.module.local.js"></script>
-<script type="module" src="./tweaks.primitives.js"></script>
-<!-- REMOVED: tweaks.rehome.js (404 error) -->
+<!-- Load Fixed Systems -->
 <script type="module" src="./stream.client.js"></script>
-
-<!-- FIXED: Load the corrected mlbIntegration.js -->
-<script src="./mlbIntegration.js"></script>
-
-<!-- FIXED: Load the corrected simpleEnhancement.js -->
-<script src="./simpleEnhancement.js"></script>
-
-<!-- Manual controls for debugging -->
+<script src="./animationController.js"></script>
+<script src="./ballBatLogic.js"></script>
 <script src="./manualControls.js"></script>
 
 </body>

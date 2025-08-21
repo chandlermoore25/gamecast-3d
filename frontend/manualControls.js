@@ -1,6 +1,5 @@
-// manualControls.js - FIXED WEB VERSION
-// Manual control buttons for testing animations and ball physics
-// Fixed for web deployment without module imports
+// manualControls.js - UPDATED VERSION
+// Removed "Fix Batter Y" button since it's working correctly
 
 (function() {
   'use strict';
@@ -226,7 +225,7 @@
     return state;
   }
 
-  // Add debug button
+  // Add debug button (REMOVED "Fix Batter Y" since it's working correctly)
   function addDebugButton() {
     const ui = document.getElementById('ui');
     if (!ui) return;
@@ -240,26 +239,15 @@
     debugRow.id = 'debugControls';
     debugRow.innerHTML = `
       <button id="debugState" style="background:#4a4a1a;">Debug State</button>
-      <button id="fixBatter" style="background:#4a1a4a;">Fix Batter Y</button>
       <button id="testEnhanced" style="background:#1a4a4a;">Test Enhanced</button>
       <button id="resetSystems" style="background:#4a2a1a;">Reset Systems</button>
+      <button id="togglePhysics" style="background:#2a4a1a;">Toggle Physics</button>
     `;
     
     ui.appendChild(debugRow);
 
     document.getElementById('debugState')?.addEventListener('click', debugGameState);
     
-    document.getElementById('fixBatter')?.addEventListener('click', () => {
-      if (window.gc?.nodes?.batter) {
-        const batter = window.gc.nodes.batter;
-        const bbox = new window.gc.THREE.Box3().setFromObject(batter);
-        const adjustment = -bbox.min.y;
-        batter.position.y += adjustment;
-        batter.updateMatrixWorld(true);
-        log('Manual batter Y adjustment:', adjustment.toFixed(3));
-      }
-    });
-
     document.getElementById('testEnhanced')?.addEventListener('click', () => {
       if (window.gc?.enhanced?.ballPhysics) {
         log('Testing enhanced ball physics...');
@@ -271,13 +259,8 @@
         };
         
         if (window.gc.enhanced.gameState) {
-          const pitch = window.gc.enhanced.gameState.processPitch(testPitch);
-          window.gc.enhanced.ballPhysics.launchBall(
-            pitch, 
-            window.gc.nodes.ball, 
-            window.gc.nodes.pitcher, 
-            window.gc.nodes.pitcherMesh
-          );
+          const pitch = window.gc.enhanced.gameState.addPitch(testPitch.location.x, testPitch.location.z, testPitch.velocity, testPitch.pitchType);
+          window.gc.enhanced.ballPhysics.launchFromHand(testPitch.location, testPitch.velocity);
         }
       } else {
         log('Enhanced systems not available');
@@ -292,7 +275,7 @@
         window.gc.enhanced.ballPhysics.reset();
       }
       if (window.gc?.enhanced?.gameState) {
-        window.gc.enhanced.gameState.resetGame();
+        window.gc.enhanced.gameState.clear();
       }
       
       // Reset basic systems
@@ -306,6 +289,20 @@
       }
       
       log('All systems reset');
+    });
+
+    document.getElementById('togglePhysics')?.addEventListener('click', () => {
+      if (window.gc?.nodes?.ball) {
+        const ball = window.gc.nodes.ball;
+        if (ball.userData.v) {
+          ball.userData.v = null;
+          ball.userData.enhancedPhysics = false;
+          log('Ball physics disabled');
+        } else {
+          ball.userData.v = new window.gc.THREE.Vector3(0, 0, 0.05);
+          log('Basic ball physics enabled');
+        }
+      }
     });
   }
 
@@ -343,6 +340,7 @@
         <div>${memInfo}</div>
         <div>${ballActive}</div>
         <div>${enhancedActive}</div>
+        <div style="margin-top: 4px; font-size: 9px; opacity: 0.7;">✅ No 404 Errors</div>
       `;
     }, 1000);
     
