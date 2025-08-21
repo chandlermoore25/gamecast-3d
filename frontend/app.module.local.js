@@ -7,23 +7,8 @@ import { snapActors } from './tweaks.snapActors.js';
 
 // ---- URL resolver (EXACT COPY) ----
 function urlVariants(relPath) {
-  const base = (location.origin + location.pathname).replace(/\/$/, '');
-  const owner = 'chandlermoore25';
-  const repo  = 'gamecast-3d';
-  const branch = 'main';
-  const RAW_FRONTEND = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/frontend`;
-  const RAW_ROOT     = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`;
-
-  const list = [
-    `${base}/${relPath}`,
-    `/gamecast-3d/${relPath}`,
-    relPath,
-    `${RAW_FRONTEND}/${relPath}`,
-    `${RAW_ROOT}/${relPath}`,
-  ];
-  console.debug('[GC] urlVariants', relPath, '→', list);
-  return list;
-} catch {}
+  const list = [];
+  try { list.push(new URL(relPath, document.baseURI).href); } catch {}
   try { list.push(new URL(relPath, import.meta.url).href); } catch {}
   try {
     const segs = (location.pathname || '').split('/').filter(Boolean);
@@ -270,9 +255,7 @@ function addFailsafe(){
 }
 
 async function loadAny(cands,key,onLoaded){
-  \1
-  loader.setCrossOrigin('anonymous');
-  console.debug('[GC] GLTFLoader crossOrigin=anonymous');
+  const loader = new GLTFLoader();
   const list = Array.isArray(cands) ? cands : [cands];
   let lastErr=null, tried=[];
   for(const url of list){

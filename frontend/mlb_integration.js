@@ -1,10 +1,8 @@
 // mlbIntegration.js - Integration layer for live MLB data and enhanced ball physics
 // Connects your existing system with enhanced features
 
-import { EnhancedBallPhysics } from './ball_physics.js';
-import { GameState } from './game_state.js';
-
-console.info('[MLBIntegration] module loaded');
+import { EnhancedBallPhysics } from './ballPhysics.js';
+import { GameState } from './gameState.js';
 
 export class MLBIntegration {
   constructor() {
