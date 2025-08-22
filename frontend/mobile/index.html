@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <!-- PWA / iOS -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>GameCast 3D — Mobile</title>
+  <!-- Put a copy of favicon.ico in /frontend/mobile/ -->
+  <link rel="icon" href="./favicon.ico">
+  <link rel="manifest" href="./pwa/manifest.webmanifest">
+  <style>
+    :root { color-scheme: dark; }
+    html, body { height:100%; margin:0; background:#000; }
+    #stage { position:relative; height:100%; width:100%; overflow:hidden; }
+    #ui { position:absolute; top:8px; left:8px; display:flex; gap:6px; z-index:5; }
+    #ui button, #ui .badge { display:none; }
+    .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:50; }
+    .backdrop { position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,.9), rgba(0,0,0,.65)); backdrop-filter: blur(8px); }
+    .card { position:relative; width:min(92vw, 520px); border:1px solid #0f2e3a; border-radius:16px; padding:16px;
+             background:#06141a; color:#cfefff; box-shadow:0 8px 32px rgba(0,0,0,.5);
+             font:15px/1.35 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    h1 { font-size:20px; margin:0 0 10px 0; }
+    .row { display:flex; gap:8px; margin:8px 0; }
+    .col { display:flex; flex-direction:column; gap:6px; }
+    label { font-size:12px; opacity:.85 }
+    input, select { padding:10px 12px; border-radius:10px; border:1px solid #123847; background:#0a1f28; color:#bfefff; }
+    .btn { padding:12px 14px; border:1px solid #123847; border-radius:12px; background:#0a1f28; color:#bfefff; cursor:pointer; text-align:center; }
+    .btn:disabled { opacity:.5; }
+    .tiny { font-size:12px; opacity:.75; }
+    .footer { margin-top:8px; display:flex; gap:8px; justify-content:flex-end; }
+    .toast { position:absolute; left:50%; bottom:16px; transform:translateX(-50%); padding:10px 14px;
+              background:#0a1f28; border:1px solid #123847; border-radius:10px; color:#bfefff; z-index:90; display:none; }
+    .drawer { position:absolute; right:10px; bottom:10px; z-index:60; }
+    .drawer>button { padding:10px 12px; border-radius:12px; border:1px solid #123847; background:#0a1f28; color:#bfefff; }
+    .drawer-content { position:absolute; right:0; bottom:48px; width:min(94vw, 520px); max-height:60vh; overflow:auto;
+                       padding:10px; border:1px solid #123847; border-radius:12px; background:#06141a; display:none; }
+    #hud { position:absolute; top:8px; right:8px; z-index:40; background:rgba(0,0,0,.55); border:1px solid #123847;
+           color:#bfefff; border-radius:10px; padding:8px 10px; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    #hud .big { font-size:14px; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="ui"><span class="badge" id="gameState">Mobile</span><button id="btnPitch">Pitch</button><button id="btnAuto">Auto</button><button id="btnSide">Batter: R</button><button id="btnReset">Reset</button></div>
+    <div id="hud" style="display:none"><div class="big" id="hudMatch">—</div><div id="hudInning">Inning —</div><div id="hudCount">B-S-O: —</div><div id="hudMsg" class="tiny" style="opacity:.8">Ready</div></div>
+    <!-- overlays... (unchanged) -->
+    <div class="overlay" id="welcomeOverlay">
+      <div class="backdrop"></div>
+      <div class="card">
+        <h1>Welcome to GameCast 3D</h1>
+        <div class="col">
+          <label for="server">Choose server</label>
+          <input id="server" placeholder="http://localhost:8000" />
+        </div>
+        <div class="row">
+          <div class="col" style="flex:1">
+            <label for="gdate">Choose date</label>
+            <input id="gdate" type="date" />
+          </div>
+          <div class="col" style="flex:1">
+            <label for="game">Choose game</label>
+            <select id="game"><option value="">— select a game —</option></select>
+          </div>
+        </div>
+        <div class="footer">
+          <button class="btn" id="btnFetch">Fetch Games</button>
+          <button class="btn" id="btnNext" disabled>Next</button>
+        </div>
+        <div class="tiny" id="welcomeStatus">Pick a server (defaults to localhost:8000)</div>
+      </div>
+    </div>
+    <div class="overlay" id="modeOverlay" style="display:none">
+      <div class="backdrop"></div>
+      <div class="card">
+        <h1>How do you want to watch?</h1>
+        <div class="row"><button class="btn" id="btnRewind" style="flex:1">Re-wind</button></div>
+        <div class="row"><button class="btn" id="btnLive" style="flex:1">Live</button><button class="btn" id="btnDemo" style="flex:1">Demo</button></div>
+        <div class="footer"><button class="btn" id="btnBack">Back</button><button class="btn" id="btnStart">Start</button></div>
+        <div class="tiny">Re-wind plays a completed game from any point. Live mirrors real-time. Demo shows a 1-inning scripted matchup.</div>
+      </div>
+    </div>
+    <div class="drawer"><button id="btnDebug">⚙︎</button><div class="drawer-content" id="debugPanel"></div></div>
+    <div class="toast" id="toast"></div>
+  </div>
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>

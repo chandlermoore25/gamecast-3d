@@ -355,7 +355,7 @@
   // Initialize when GameCast is ready
   function waitForGameCast() {
     if (window.gc && window.gc.scene && window.gc.nodes) {
-      log('GameCast detected, adding manual controls...');
+      if (!manualControlsInitialized) log('GameCast detected, adding manual controls...');
       setTimeout(() => {
         createManualControls();
         addDebugButton();
