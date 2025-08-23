@@ -238,20 +238,11 @@ function play(actionKey, eventData) {
   
   // Handle ball physics
   if (actionKey === 'pitch') {
-    const bp = { enabled: true, velocity, location: { x: (location?.x ?? 0), z: (location?.z ?? location?.y ?? 2.5) } };
-    let usedEnhanced = false;
-    if (window.ballBatLogic?.launchBall) {
-      try { window.ballBatLogic.launchBall(bp); usedEnhanced = true; console.log('[PLAY] Enhanced launch via ballBatLogic', bp); } catch(e){ console.warn('[PLAY] Enhanced launch failed (ballBatLogic)', e); }
-    }
-    if (!usedEnhanced && window.gc?.enhanced?.ballPhysics?.launchFromHand) {
-      try { window.gc.enhanced.ballPhysics.launchFromHand(bp.location, bp.velocity); usedEnhanced = true; console.log('[PLAY] Enhanced launch via gc.enhanced', bp); } catch(e){ console.warn('[PLAY] Enhanced launch failed (gc.enhanced)', e); }
-    }
-    if (!usedEnhanced) {
-      console.log('[PLAY] Falling back to visible/basic launch');
-      launchVisibleBall(location, velocity);
-    }
+    launchVisibleBall(location, velocity);
+    
     // Update heat map
-    try { bumpHeatAt(bp.location.x, bp.location.z); drawZone(); } catch(e){}
+    bumpHeatAt(location.x, location.z || location.y || 2.5);
+    drawZone();
   }
   
   // Position bat with batter

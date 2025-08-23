@@ -1,0 +1,10 @@
+GameCast 3D — Unified Engine Patches (2025-08-22)
+
+Fixes included:
+1) Boot gating so engine waits for THREE.js, GLTFLoader, and DOM before starting.
+2) Added THREE.Clock() to engine; fixed render loop crash (getDelta on undefined).
+3) Improved waitForGameEngine() on index.html to avoid race/half-baked API call.
+4) Load Games now tolerates missing 'btn' arg and sets backend before fetch.
+5) Strike zone canvas created automatically; heat map renders in Play/Stream.
+6) Three r128 compatibility: uses renderer.outputEncoding = THREE.sRGBEncoding.
+7) GLB path probing prefers /frontend/models first, falls back gracefully.

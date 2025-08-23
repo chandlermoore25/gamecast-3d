@@ -1,196 +1,355 @@
-// stream.client.js — Unified Live/Replay client with strong debug logs
-// - Live: WebSocket first, SSE tail fallback
-// - Replay: SSE with pacing, supports start and speed
-// - Emits gc:play events the renderer already consumes
-// - Provides a tiny API used by the wizard UI
-(() => {
-  'use strict';
-  const DEFAULT_BACKENDS = [
-    'http://localhost:8000',
-    'https://gamecast-3d.onrender.com'
-  ];
+// stream.client.js - FIXED VERSION
+// Added local DB option and better error handling
 
-  let ws = null, es = null;
-  let connected = false;
-  let backend = DEFAULT_BACKENDS[0];
-  let mode = 'auto';       // 'auto' | 'live' | 'replay'
-  let speed = 1;           // 1,2,4...
-  let start = 'begin';     // 'begin' | 'tail' | '<pitchNumber>'
-  let currentGamePk = null;
-  let lastKey = null;
+const DEFAULT_BACKENDS = [
+  'http://localhost:8000',  // Local FastAPI
+  'https://gamecast-3d.onrender.com'  // Render backup
+];
 
-  const log = (...a) => console.log('[STREAM]', ...a);
+let ws = null, es = null, connected = false, lastKey = null;
 
-  // ---------- Helpers
-  const toWS = (url) => url.replace(/^http/, 'ws');
-  const safeClose = () => {
-    try { ws && ws.close(); } catch {}
-    try { es && es.close && es.close(); } catch {}
-    ws = null; es = null; connected = false;
-  };
+function log(...a){ console.log('[STREAM]', ...a); }
 
-  function inferType(ev){
-    const out = (ev?.pitch?.outcome || '').toLowerCase();
-    if (/hit by pitch|walk/.test(out)) return 'WALK';
-    if (/strikeout|k looking|k swinging/.test(out)) return 'STRIKEOUT';
-    if (/home run/.test(out)) return 'HOMERUN';
-    if (/single|double|triple/.test(out)) return 'HIT';
-    if (/foul/.test(out)) return 'FOUL';
-    if (/strike/.test(out)) return 'STRIKE';
-    if (/ball/.test(out)) return 'BALL';
-    return ev?.type || 'PITCH';
-  }
+function inferType(ev){
+  const out = (ev?.pitch?.outcome || '').toLowerCase();
+  if (/hit by pitch|walk/.test(out)) return 'WALK';
+  if (/strikeout|k looking|k swinging/.test(out)) return 'STRIKEOUT';
+  if (/foul/.test(out)) return 'FOUL';
+  if (/in play|single|double|triple|home run|homer/.test(out)) return 'INPLAY';
+  return 'PITCH';
+}
 
-  function toAnimEvent(ev){
-    const px = ev?.location?.x ?? ev?.px ?? 0;
-    const pz = ev?.location?.z ?? ev?.pz ?? 2.5;
-    const velocity = ev?.velocity ?? 95;
-    const type = inferType(ev);
-    const desc = ev?.description || `${type} [${px.toFixed?.(2) ?? px}, ${pz.toFixed?.(2) ?? pz}]`;
-    return {
-      type,
-      desc,
-      raw: ev,
-      animation: {
-        triggerPitcher: type === 'PITCH' || /pitch/i.test(type),
-        triggerBatter : /swing|contact|homerun|hit/i.test(type),
-        ballPhysics: { enabled: true, velocity, location: { x: px, z: pz } }
+function asDesc(ev){
+  const mph = ev?.pitch?.mph ? Math.round(ev.pitch.mph) : '—';
+  const px = ev?.pitch?.loc?.px, pz = ev?.pitch?.loc?.pz;
+  const hasLoc = (typeof px === 'number' && typeof pz === 'number');
+  return `${ev?.pitch?.type || 'Pitch'} ${mph}${typeof mph==='number'?' mph':''} ${hasLoc ? `[${(+px).toFixed(2)},${(+pz).toFixed(2)}]` : ''}`.trim();
+}
+
+function dispatchPlay(ev){
+  const type = inferType(ev);
+  const desc = asDesc(ev);
+  
+  // Enhanced event with animation triggers
+  const enhancedEvent = {
+    type, 
+    desc, 
+    raw: ev,
+    animation: {
+      triggerPitcher: type === 'PITCH',
+      triggerBatter: ['SWING', 'CONTACT', 'INPLAY'].includes(type),
+      ballPhysics: {
+        enabled: true,
+        velocity: ev?.pitch?.mph || 95,
+        location: {
+          x: ev?.pitch?.loc?.px || (Math.random() - 0.5) * 1.6,
+          z: ev?.pitch?.loc?.pz || 1.5 + Math.random() * 2
+        }
       }
-    };
-  }
-
-  function dispatchPlay(ev){
-    const enhancedEvent = toAnimEvent(ev);
-    document.dispatchEvent(new CustomEvent('gc:play', { detail: enhancedEvent }));
-    log('▶', ev.idempotencyKey || ev.seq || 'n/a', enhancedEvent.type, enhancedEvent.desc);
-  }
-
-  function reduce(ev, opts = {}){
-    if (!ev) return;
-    const idKey = ev.idempotencyKey ?? ev.seq ?? `${ev.gamePk || currentGamePk}-${ev.ts || Date.now()}`;
-    if (lastKey && idKey <= lastKey) { log('skip dup', idKey); return; }
-    // Optional replay filters (inning / half / fromPitch)
-    if (opts.filter) {
-      const f = opts.filter;
-      if (typeof f.fromPitch === 'number' && (ev.pitchNumber ?? 0) < f.fromPitch) return;
-      if (f.inning && (ev.inningNumber ?? 0) < f.inning) return;
-      if (f.half && (ev.inningHalf || '').toLowerCase() !== f.half) return;
     }
-    lastKey = idKey;
-    dispatchPlay(ev);
-    // HUD hook
-    try {
-      const el = document.getElementById('hud-live');
-      if (el) {
-        const t = ev?.gameTime || ev?.ts || new Date().toISOString();
-        el.textContent = `Live MLB Stats — Pitches: ${ev.pitchCount ?? '?'}  Strikes: ${ev.strikes ?? '?'}  Velocity: ${ev.velocity ?? '?'} mph  Time: ${t}`;
-      }
-    } catch {}
+  };
+  
+  document.dispatchEvent(new CustomEvent('gc:play', { detail: enhancedEvent }));
+  log('▶', ev.idempotencyKey, type, desc);
+}
+
+function reduce(ev){
+  if (!ev || !ev.idempotencyKey) return;
+  if (lastKey && ev.idempotencyKey <= lastKey) {
+    log('skip dup', ev.idempotencyKey);
+    return;
   }
+  lastKey = ev.idempotencyKey;
+  dispatchPlay(ev);
+  
+  // Update HUD
+  const hud = document.getElementById('gc_hud') || injectHud();
+  hud.textContent = `Inning ${ev.half || '?'} ${ev.inning || '?'} | Outs ${ev.outs ?? '?'} | Count ${ev.count?.balls ?? '?'}-${ev.count?.strikes ?? '?'}\n` +
+                    `Pitch ${ev.pitch?.type || '?'} @ ${ev.pitch?.mph ? Math.round(ev.pitch.mph) : '—'} mph | key=${ev.idempotencyKey}`;
+}
 
-  // ---------- Public API
-  async function listBackends(){ return DEFAULT_BACKENDS.slice(); }
-  function setBackend(url){ backend = url; log('Backend set:', backend); }
-  function setMode(m){ mode = m; log('Mode set:', mode); }
-  function setSpeed(v){ speed = v; log('Speed set:', speed); }
-  function setStart(v){ start = v; log('Start set:', start); }
+function injectHud(){
+  const el = document.createElement('pre');
+  el.id = 'gc_hud';
+  Object.assign(el.style, {
+    position:'absolute', right:'10px', top:'10px', zIndex:20,
+    background:'rgba(0,0,0,.55)', color:'#bfefff', padding:'8px 10px',
+    border:'1px solid #0a3a4a', borderRadius:'10px', font:'12px/1.3 ui-monospace', maxWidth:'42ch'
+  });
+  document.body.appendChild(el);
+  return el;
+}
 
-  async function loadGames(dateStr){
-    const url = `${backend}/api/games?date=${encodeURIComponent(dateStr)}`;
+function injectControls(){
+  const ui = document.getElementById('ui') || (()=> {
+    const d=document.createElement('div'); d.id='ui'; document.body.appendChild(d); return d;
+  })();
+  
+  // Remove existing controls if present
+  const existing = document.querySelector('#streamControls');
+  if (existing) existing.remove();
+  
+  const wrap = document.createElement('div');
+  wrap.className = 'row';
+  wrap.id = 'streamControls';
+  wrap.innerHTML = `
+    <select id="gc_backend" style="width:200px;padding:6px 8px;border-radius:8px;border:1px solid #123847;background:#06141a;color:#bfefff;">
+      <option value="http://localhost:8000">Local DB (localhost:8000)</option>
+      <option value="https://gamecast-3d.onrender.com">Render Backend</option>
+    </select>
+    <input id="gc_date" type="date" style="padding:6px 8px;border-radius:8px;border:1px solid #123847;background:#06141a;color:#bfefff;" />
+    <button id="gc_load">Load Games</button>
+    <select id="gc_games" style="min-width:220px;padding:6px 8px;border-radius:8px;border:1px solid #123847;background:#06141a;color:#bfefff;"></select>
+    <button id="gc_connect">Connect</button>
+    <button id="gc_disconnect" style="background:#5a1a1a;">Disconnect</button>
+    <span id="gc_status" class="badge">Offline</span>
+  `;
+  ui.appendChild(wrap);
+
+  // Set default date to today
+  const dateInput = document.getElementById('gc_date');
+  dateInput.value = new Date().toISOString().slice(0,10);
+
+  // Load saved backend preference
+  const savedBackend = localStorage.getItem('gc_backend') || DEFAULT_BACKENDS[0];
+  document.getElementById('gc_backend').value = savedBackend;
+
+  // Wire up controls
+  document.getElementById('gc_load').onclick = loadGames;
+  document.getElementById('gc_connect').onclick = connectToGame;
+  document.getElementById('gc_disconnect').onclick = disconnect;
+  
+  // Auto-test connection on backend change
+  document.getElementById('gc_backend').onchange = testConnection;
+  
+  // Test connection on startup
+  setTimeout(testConnection, 1000);
+}
+
+async function testConnection() {
+  const backendSelect = document.getElementById('gc_backend');
+  const status = document.getElementById('gc_status');
+  const backend = backendSelect.value;
+  
+  status.textContent = 'Testing...';
+  status.style.background = '#4a4a1a';
+  
+  try {
+    log('Testing connection to:', backend);
+    const response = await fetch(`${backend}/api/games?date=2024-01-01`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      mode: 'cors',
+      signal: AbortSignal.timeout(5000)
+    });
+    
+    if (response.ok) {
+      status.textContent = 'Available';
+      status.style.background = '#1a5a3a';
+      localStorage.setItem('gc_backend', backend);
+      log('✅ Connection successful to:', backend);
+      return true;
+    } else {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  } catch (error) {
+    status.textContent = 'Error';
+    status.style.background = '#5a1a1a';
+    log('❌ Connection failed to:', backend, error.message);
+    return false;
+  }
+}
+
+async function loadGames() {
+  const backend = document.getElementById('gc_backend').value;
+  const date = document.getElementById('gc_date').value || new Date().toISOString().slice(0,10);
+  const gamesSelect = document.getElementById('gc_games');
+  const status = document.getElementById('gc_status');
+  
+  if (!backend) {
+    alert('Please select a backend');
+    return;
+  }
+  
+  status.textContent = 'Loading...';
+  gamesSelect.innerHTML = '<option value="">Loading games...</option>';
+  
+  try {
+    const url = `${backend}/api/games?date=${date}`;
     log('Loading games from:', url);
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) throw new Error('games list http ' + r.status);
-    const data = await r.json();
-    log('Loaded games:', data?.length || 0);
-    return data || [];
-  }
-
-  function connect(opts = {}){
-    const { gamePk, replayFilter } = opts;
-    currentGamePk = gamePk ?? currentGamePk;
-    if (!currentGamePk) { log('❌ No gamePk provided'); return; }
-    lastKey = null;
-    safeClose();
-
-    const now = new Date();
-    const isToday = (d => {
-      try { const dt = new Date(d); return dt.toDateString() === now.toDateString(); }
-      catch { return true; }
-    })(opts.date || now);
-
-    // Auto resolve: replay for past days; live for today
-    const resolvedMode = (mode === 'auto') ? (isToday ? 'live' : 'replay') : mode;
-    log(`Connecting: gamePk=${currentGamePk} mode=${resolvedMode} start=${start} speed=${speed}`);
-
-    if (resolvedMode === 'replay'){
-      const params = new URLSearchParams({ gamePk: String(currentGamePk), mode: 'replay', start: String(start), speed: String(speed) });
-      const url = `${backend}/sse/stream?${params}`;
-      log('SSE replay →', url);
-      es = new EventSource(url, { withCredentials: false });
-      es.onmessage = (e)=>{
-        try {
-          const ev = JSON.parse(e.data);
-          reduce(ev, { filter: replayFilter });
-        } catch (err) { log('Bad SSE JSON', err, e.data); }
-      };
-      es.onerror = (e)=>{ log('❌ SSE error', e); };
-      es.onopen  = ()=>{ connected = true; log('✅ SSE connected'); document.dispatchEvent(new Event('gc:connected')); };
+    
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const games = await response.json();
+    log('Loaded games:', games.length);
+    
+    gamesSelect.innerHTML = '<option value="">Select a game...</option>';
+    
+    if (games.length === 0) {
+      gamesSelect.innerHTML = '<option value="">No games found for this date</option>';
+      status.textContent = 'No Games';
       return;
     }
-
-    // Live: WS first, SSE tail fallback
-    const wsURL = `${toWS(backend)}/ws/game/${currentGamePk}`;
-    log('WS connecting →', wsURL);
-    ws = new WebSocket(wsURL);
-    ws.onopen = ()=>{ connected = true; log('✅ WS connected'); document.dispatchEvent(new Event('gc:connected')); };
-    ws.onclose = ()=>{ connected = false; log('WS closed; falling back to SSE tail'); tailSSE(); };
-    ws.onerror = (e)=>{ log('❌ WebSocket error:', e); try { ws.close(); } catch {}; };
-    ws.onmessage = (m)=>{
-      try { const ev = JSON.parse(m.data); reduce(ev); }
-      catch (err) { log('Bad WS JSON', err, m.data); }
-    };
+    
+    games.forEach(game => {
+      const option = document.createElement('option');
+      option.value = game.gamePk;
+      option.textContent = `${game.away} @ ${game.home} — ${game.status}`;
+      gamesSelect.appendChild(option);
+    });
+    
+    status.textContent = `${games.length} Games`;
+    status.style.background = '#1a4a5a';
+    
+  } catch (error) {
+    log('❌ Failed to load games:', error.message);
+    gamesSelect.innerHTML = '<option value="">Failed to load games</option>';
+    status.textContent = 'Load Failed';
+    status.style.background = '#5a1a1a';
+    alert(`Failed to load games: ${error.message}`);
   }
+}
 
-  function tailSSE(){
-    const url = `${backend}/sse/stream?gamePk=${encodeURIComponent(currentGamePk)}`;
-    log('SSE tail →', url);
-    es = new EventSource(url, { withCredentials: false });
-    es.onmessage = (e)=>{
-      try { const ev = JSON.parse(e.data); reduce(ev); }
-      catch (err) { log('Bad SSE JSON', err, e.data); }
-    };
-    es.onerror = (e)=>{ log('❌ SSE error', e); };
-    es.onopen  = ()=>{ connected = true; log('✅ SSE connected'); document.dispatchEvent(new Event('gc:connected')); };
+function connectToGame() {
+  const backend = document.getElementById('gc_backend').value;
+  const gamePk = document.getElementById('gc_games').value;
+  
+  if (!backend) {
+    alert('Please select a backend');
+    return;
   }
-
-  function disconnect(){
-    safeClose();
-    document.dispatchEvent(new Event('gc:disconnected'));
-    log('Disconnected');
+  
+  if (!gamePk) {
+    alert('Please select a game');
+    return;
   }
+  
+  connectWS(backend, gamePk);
+}
 
-  function cleanup(){ disconnect(); }
-
-  // Inject tiny HUD if missing
-  function ensureHUD(){
-    if (document.getElementById('hud-live')) return;
-    const el = document.createElement('div');
-    el.id = 'hud-live';
-    el.style.cssText = 'position:fixed;right:16px;top:12px;color:#9fe;z-index:60;font:12px/1.3 monospace;';
-    el.textContent = 'Live MLB Stats: standby';
-    document.body.appendChild(el);
-  }
-
-  window.addEventListener('DOMContentLoaded', ensureHUD);
-
-  // Expose API
-  window.streamClient = {
-    listBackends,
-    setBackend, setMode, setSpeed, setStart,
-    loadGames,
-    connect,
-    disconnect,
-    cleanup,
-    isConnected: () => connected
+function connectWS(base, gamePk){
+  cleanup();
+  
+  const status = document.getElementById('gc_status');
+  status.textContent = 'Connecting...';
+  status.style.background = '#4a4a1a';
+  
+  const wsUrl = `${base.replace(/^http/, 'ws')}/ws/game/${gamePk}`;
+  log('WS connecting to:', wsUrl);
+  
+  ws = new WebSocket(wsUrl);
+  let fellBack = false;
+  
+  ws.onopen = () => { 
+    connected = true; 
+    status.textContent = 'Connected (WS)';
+    status.style.background = '#1a5a3a';
+    log('✅ WebSocket connected'); 
   };
-})();
+  
+  ws.onmessage = (m) => { 
+    try{ 
+      reduce(JSON.parse(m.data)); 
+    } catch(e) { 
+      log('❌ Bad JSON:', e); 
+    } 
+  };
+  
+  ws.onerror = (e) => { 
+    log('❌ WebSocket error:', e); 
+    if (!fellBack) {
+      fellBack = true;
+      fallbackSSE(base, gamePk); 
+    }
+  };
+  
+  ws.onclose = () => { 
+    connected = false;
+    status.textContent = 'Disconnected';
+    status.style.background = '#5a1a1a';
+    if (!fellBack) {
+      fellBack = true;
+      fallbackSSE(base, gamePk); 
+    }
+  };
+}
+
+function fallbackSSE(base, gamePk){
+  cleanup();
+  
+  const status = document.getElementById('gc_status');
+  status.textContent = 'SSE Fallback...';
+  status.style.background = '#4a4a1a';
+  
+  const url = `${base}/sse/stream?gamePk=${gamePk}`;
+  log('SSE fallback to:', url);
+  
+  es = new EventSource(url);
+  
+  es.onopen = () => {
+    status.textContent = 'Connected (SSE)';
+    status.style.background = '#1a5a3a';
+    log('✅ SSE connected');
+  };
+  
+  es.onmessage = (e) => { 
+    try{ 
+      reduce(JSON.parse(e.data)); 
+    } catch(err) { 
+      log('❌ SSE bad JSON:', err); 
+    } 
+  };
+  
+  es.addEventListener('end', () => { 
+    log('SSE stream ended'); 
+    es.close(); 
+  });
+  
+  es.onerror = (e) => { 
+    log('❌ SSE error:', e); 
+    status.textContent = 'SSE Error';
+    status.style.background = '#5a1a1a';
+    es.close(); 
+  };
+}
+
+function disconnect() {
+  cleanup();
+  const status = document.getElementById('gc_status');
+  status.textContent = 'Offline';
+  status.style.background = '#06141a';
+  log('Disconnected');
+}
+
+function cleanup(){
+  if (ws) { 
+    try { ws.close(); } catch {} 
+    ws = null; 
+  }
+  if (es) { 
+    try { es.close(); } catch {} 
+    es = null; 
+  }
+  connected = false; 
+  lastKey = null;
+}
+
+// Initialize when DOM is ready
+window.addEventListener('load', injectControls);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', cleanup);
+
+// Export for external use
+window.streamClient = {
+  connect: connectWS,
+  disconnect,
+  cleanup,
+  isConnected: () => connected
+};

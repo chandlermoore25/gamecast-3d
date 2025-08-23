@@ -4,14 +4,14 @@
 // Safe to include alongside your loaders.
 
 (async () => {
-  const waitFor = (check, ms = 30000) =>
+  const waitFor = (check, ms = 10000) =>
     new Promise((res, rej) => {
       const t0 = performance.now();
       const id = setInterval(() => {
         try {
           const ok = check();
           if (ok) { clearInterval(id); res(ok); }
-          else if (performance.now() - t0 > ms) { clearInterval(id); rej(new Error('tweaks.primitives waitFor timeout after '+ms+'ms')); }
+          else if (performance.now() - t0 > ms) { clearInterval(id); rej(new Error('timeout')); }
         } catch (e) { clearInterval(id); rej(e); }
       }, 60);
     });
