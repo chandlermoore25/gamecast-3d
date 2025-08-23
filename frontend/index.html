@@ -549,6 +549,85 @@
 })();
 </script>
 
+
+<!-- ====== SCOREBOARD + CLOCK OVERLAY ====== -->
+<style>
+  #gc_scoreboard{
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    display: grid; grid-template-columns: auto auto auto auto auto; gap: 10px; align-items: center;
+    background: rgba(6,20,26,.75); border: 1px solid #0f2e3a; border-radius: 12px;
+    padding: 6px 10px; color: #e6f7ff; z-index: 60; font: 14px/1.2 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  }
+  #gc_scoreboard .team { display:flex; gap:6px; align-items:center; padding:3px 6px; background:#0a1f28; border:1px solid #123847; border-radius:8px; }
+  #gc_scoreboard .label { opacity:.85 }
+  #gc_scoreboard .value { font-weight:700 }
+  #gc_scoreboard .divider { width:1px; height:18px; background:#123847; margin:0 2px }
+</style>
+<div id="gc_scoreboard" role="status" aria-label="Scoreboard and clocks">
+  <div class="team"><span class="label">Away</span><span id="gc_away">—</span><span class="value" id="gc_away_r">0</span></div>
+  <div class="team"><span class="label">Home</span><span id="gc_home">—</span><span class="value" id="gc_home_r">0</span></div>
+  <div class="divider"></div>
+  <div><span class="label">Inning</span> <span class="value" id="gc_inning">—</span></div>
+  <div><span class="label">Half</span> <span class="value" id="gc_half">—</span></div>
+  <div class="divider"></div>
+  <div><span class="label">Count</span> <span class="value" id="gc_count">—</span></div>
+  <div><span class="label">Outs</span> <span class="value" id="gc_outs">—</span></div>
+  <div class="divider"></div>
+  <div><span class="label">Game</span> <span class="value" id="gc_gameClock">00:00</span></div>
+  <div><span class="label">Now</span> <span class="value" id="gc_realClock">--:--</span></div>
+</div>
+<script>
+(function(){
+  const log = (...a)=>console.log('[SCOREBOARD]', ...a);
+  const el = {
+    away: document.getElementById('gc_away'),
+    home: document.getElementById('gc_home'),
+    awayR: document.getElementById('gc_away_r'),
+    homeR: document.getElementById('gc_home_r'),
+    inning: document.getElementById('gc_inning'),
+    half: document.getElementById('gc_half'),
+    count: document.getElementById('gc_count'),
+    outs: document.getElementById('gc_outs'),
+    gameClock: document.getElementById('gc_gameClock'),
+    realClock: document.getElementById('gc_realClock'),
+  };
+  // Clocks
+  let gameStartMs = null;
+  let lastEventMs = null;
+  setInterval(()=>{
+    // Real clock
+    const now = new Date();
+    el.realClock.textContent = now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    // Game clock
+    if (gameStartMs){
+      const secs = Math.floor((Date.now() - gameStartMs)/1000);
+      const m = String(Math.floor(secs/60)).padStart(2,'0');
+      const s = String(secs%60).padStart(2,'0');
+      el.gameClock.textContent = m+':'+s;
+    }
+  }, 1000);
+  // Update from plays
+  document.addEventListener('gc:play', (e)=>{
+    const d = e.detail || {};
+    const raw = d.raw || {};
+    // Start clock on first event
+    if (!gameStartMs) gameStartMs = Date.now();
+    lastEventMs = Date.now();
+    // Teams (if available)
+    if (raw.awayTeam) el.away.textContent = raw.awayTeam;
+    if (raw.homeTeam) el.home.textContent = raw.homeTeam;
+    // Inning/half/outs/count
+    if (raw.inning) el.inning.textContent = raw.inning;
+    if (raw.half) el.half.textContent = raw.half;
+    if (raw.count) el.count.textContent = `${raw.count.balls ?? '—'}-${raw.count.strikes ?? '—'}`;
+    if (typeof raw.outs === 'number') el.outs.textContent = raw.outs;
+  });
+  log('HUD ready');
+})();
+</script>
+<!-- ====== /SCOREBOARD + CLOCK OVERLAY ====== -->
+
 <!-- Load ALL Fixed Systems in Correct Order -->
 <script type="module" src="./stream.client.js"></script>
 <script src="./menu.layer.js"></script>
@@ -557,5 +636,6 @@
 <script src="./physicsIntegration.js"></script>
 <script src="./manualControls.js"></script>
 
+  <script src="./timeline.controls.js"></script>
 </body>
 </html>

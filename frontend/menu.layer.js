@@ -128,6 +128,8 @@
     // Wiring
     btnPlay.onclick = () => {
       log('Play mode selected');
+      if (window.streamMode) window.streamMode.set('db');
+      if (window.streamMode) window.streamMode.set('db');
       try {
         document.getElementById('gc_menu_overlay')?.remove();
         ensureToggle();
@@ -136,8 +138,11 @@
       } catch(e){ console.warn(NS, 'Play error', e); }
     };
 
-    btnRewind.onclick = () => { buildRewind(card); };
-    btnLive.onclick   = () => { buildLive(card); };
+    btnRewind.onclick = () => { if (window.streamMode) window.streamMode.set('db');
+      if (window.streamMode) window.streamMode.set('db');
+      buildRewind(card); };
+    btnLive.onclick   = () => { if (window.streamMode) window.streamMode.set('live');
+      buildLive(card); };
   }
 
   // -------- Mode Builders --------
@@ -224,6 +229,38 @@
     return !!document.getElementById('streamControls');
   }
 
+
+// ---- DEMO generator (frontend-only) ----
+const DEMO = (function(){
+  let timer = null, count = 0, inning = 1, half = 'top', outs = 0, balls = 0, strikes = 0;
+  function start(){
+    stop();
+    count = 0; inning = 1; half = 'top'; outs = 0; balls = 0; strikes = 0;
+    timer = setInterval(()=>{
+      count++;
+      const mph = 92 + (count % 6);
+      const ev = {
+        event: 'pitch',
+        gamePk: 999999,
+        ts: new Date().toISOString(),
+        inning, half, outs,
+        count: { balls, strikes },
+        pitch: { number: count, type: 'Fastball', mph, outcome: (strikes<2?'Called Strike':'In play, out(s)'), loc: { px: 0.1, pz: 2.6 } },
+        bases: { onFirst: false, onSecond: false, onThird: false },
+        atBatIndex: Math.floor(count/5),
+        idempotencyKey: 'demo-'+count
+      };
+      document.dispatchEvent(new CustomEvent('gc:play', { detail: ev }));
+      if (strikes < 2) { strikes++; } else { strikes = 0; balls = 0; outs++; }
+      if (outs >= 3) { outs = 0; half = (half==='top'?'bottom':'top'); inning += (half==='top')?1:0; }
+    }, 800);
+    console.log('[MENU] DEMO started');
+  }
+  function stop(){ if (timer) { clearInterval(timer); timer = null; } }
+  return { start, stop };
+})();
+window.gcDemo = DEMO;
+
   // Start overlay on first load
   function boot(){
     injectStyles();
@@ -237,6 +274,28 @@
   } else {
     boot();
   }
+
+
+document.addEventListener('gc:backend-missing', (e)=>{
+  const det = e.detail || {};
+  console.warn('[MENU] Backend missing:', det);
+  const root = document.getElementById('gc_menu_overlay') || (function(){ injectStyles(); const r = document.createElement('div'); r.id='gc_menu_overlay'; document.body.appendChild(r); return r; })();
+  const card = document.createElement('div'); card.id='gc_menu_card';
+  root.innerHTML = ''; root.appendChild(card);
+  card.innerHTML = `
+    <div id="gc_menu_title"><span style="font-size:28px">🖥️</span><span>Local backend not running</span></div>
+    <div id="gc_menu_sub">Play/Re-wind (DB mode) needs your local server at <code>http://localhost:8000</code>.</div>
+    <div class="gc_menu_row" style="margin-top:8px">
+      <button class="gc_btn" id="gc_btn_demo">Start Demo (no server)</button>
+      <button class="gc_btn" id="gc_btn_liveinstead">Switch to Live</button>
+      <button class="gc_btn" id="gc_btn_retry">Retry</button>
+    </div>
+    <div class="gc_mode_hint">Open a terminal in <code>/backend</code> and run <code>uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --reload</code>.</div>
+  `;
+  card.querySelector('#gc_btn_demo').onclick = ()=>{ if (window.streamMode) window.streamMode.set('db'); DEMO.start(); root.remove(); };
+  card.querySelector('#gc_btn_liveinstead').onclick = ()=>{ if (window.streamMode) window.streamMode.set('live'); showOverlay('root'); };
+  card.querySelector('#gc_btn_retry').onclick = async ()=>{ if (window.streamBackend) { const ok = await window.streamBackend.ensureBackend('db'); if (ok) root.remove(); } };
+});
 
   // Expose for debugging
   window.gcMenu = { show: ()=>showOverlay('root') };

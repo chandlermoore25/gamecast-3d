@@ -1,5 +1,16 @@
 // stream.client.js - FIXED VERSION
+
+// --- Mode control: 'live' (StatsAPI) or 'db' (local replay) ---
+let STREAM_MODE = 'live';
+export function setStreamMode(mode){
+  STREAM_MODE = (mode === 'db') ? 'db' : 'live';
+  console.log('[STREAM] Mode set:', STREAM_MODE);
+}
+window.streamMode = { set: setStreamMode };
+
 // Added local DB option and better error handling
+const FETCH_TIMEOUT_MS = 12000; // increased timeout for slow cold starts
+
 
 const DEFAULT_BACKENDS = [
   'http://localhost:8000',  // Local FastAPI
@@ -136,7 +147,7 @@ async function testConnection() {
   
   try {
     log('Testing connection to:', backend);
-    const response = await fetch(`${backend}/api/games?date=2024-01-01`, {
+    const response = await fetch(`${getActiveBackend()}/api/games?date=2024-01-01`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       mode: 'cors',
@@ -175,8 +186,10 @@ async function loadGames() {
   gamesSelect.innerHTML = '<option value="">Loading games...</option>';
   
   try {
-    const url = `${backend}/api/games?date=${date}`;
-    log('Loading games from:', url);
+    const url = `${getActiveBackend()}/api/games?date=${date}&source=${STREAM_MODE}`;
+    log('Ensuring backend for mode ${STREAM_MODE} ...');
+  await ensureBackend(STREAM_MODE);
+  console.log('[STREAM] Loading games from:', url);
     
     const response = await fetch(url, {
       signal: AbortSignal.timeout(10000)
@@ -287,7 +300,7 @@ function fallbackSSE(base, gamePk){
   status.textContent = 'SSE Fallback...';
   status.style.background = '#4a4a1a';
   
-  const url = `${base}/sse/stream?gamePk=${gamePk}`;
+  const url = `${base}/sse/stream?gamePk=${gamePk}&source=${STREAM_MODE}`;
   log('SSE fallback to:', url);
   
   es = new EventSource(url);
